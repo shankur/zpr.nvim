@@ -59,12 +59,13 @@ local function save()
 end
 
 -- Build the prefix shown before the comment body.
--- Single-line: "  💬 :5 "   Range: "  💬 [5–8] "
+-- The └─ visually connects the bracket in the sign column to the comment.
+-- Single-line: "└─ 💬 :5 "   Range: "└─ 💬 [5–8] "
 local function comment_prefix(new_line, new_line_end)
   if new_line_end and new_line_end > new_line then
-    return ("  💬 [%d–%d] "):format(new_line, new_line_end)
+    return ("└─ 💬 [%d–%d] "):format(new_line, new_line_end)
   end
-  return ("  💬 :%d "):format(new_line)
+  return ("└─ 💬 :%d "):format(new_line)
 end
 
 -- Render the comment virt_line below `line_0` (0-based) in the after buffer.
@@ -104,14 +105,12 @@ local function render_comment_lines(buf, new_line, new_line_end)
   local ids  = {}
   for lnum = new_line, last do
     local sign
-    if new_line == last then
-      sign = "│"
+    if lnum == new_line and new_line == last then
+      sign = "│"   -- single line: bracket continues into virt_line └─
     elseif lnum == new_line then
-      sign = "╭"
-    elseif lnum == last then
-      sign = "╰"
+      sign = "╭"   -- range start
     else
-      sign = "│"
+      sign = "│"   -- range middle and last: └─ in virt_line closes it
     end
     local id = vim.api.nvim_buf_set_extmark(buf, ns_lines, lnum - 1, 0, {
       sign_text     = sign,

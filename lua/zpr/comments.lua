@@ -82,8 +82,10 @@ function M.render_all(file_path)
   vim.api.nvim_buf_clear_namespace(before_buf, ns_filler,  0, -1)
   for _, c in ipairs(comments()) do
     if c.file == file_path then
-      c.comment_id = render_comment(after_buf,  c.new_line - 1, c.body)
-      c.filler_id  = render_filler(before_buf, c.old_line - 1)
+      c.comment_id = render_comment(after_buf, c.new_line - 1, c.body)
+      local before_lines = vim.api.nvim_buf_line_count(before_buf)
+      local filler_line  = math.min(c.old_line - 1, math.max(0, before_lines - 1))
+      c.filler_id  = before_lines > 0 and render_filler(before_buf, filler_line) or nil
       c.after_buf  = after_buf
       c.before_buf = before_buf
     end
@@ -107,8 +109,10 @@ function M.add(file_path, new_line, hunk_index, hunk)
       if not before_buf or not vim.api.nvim_buf_is_valid(before_buf) then return end
 
       local old_line   = map_to_old_line(new_line, hunk)
-      local comment_id = render_comment(after_buf,  new_line - 1, text)
-      local filler_id  = render_filler(before_buf, old_line - 1)
+      local comment_id = render_comment(after_buf, new_line - 1, text)
+      local before_lines = vim.api.nvim_buf_line_count(before_buf)
+      local filler_line  = math.min(old_line - 1, math.max(0, before_lines - 1))
+      local filler_id  = before_lines > 0 and render_filler(before_buf, filler_line) or nil
 
       table.insert(comments(), {
         file       = file_path,

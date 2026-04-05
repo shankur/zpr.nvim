@@ -59,12 +59,12 @@ local function save()
 end
 
 -- Build the prefix shown before the comment body.
--- Single-line: "  💬 "   Range: "  💬 [5–8] "
+-- Single-line: "  💬 :5 "   Range: "  💬 [5–8] "
 local function comment_prefix(new_line, new_line_end)
   if new_line_end and new_line_end > new_line then
     return ("  💬 [%d–%d] "):format(new_line, new_line_end)
   end
-  return "  💬 "
+  return ("  💬 :%d "):format(new_line)
 end
 
 -- Render the comment virt_line below `line_0` (0-based) in the after buffer.
@@ -105,7 +105,7 @@ local function render_comment_lines(buf, new_line, new_line_end)
   for lnum = new_line, last do
     local sign
     if new_line == last then
-      sign = "💬"
+      sign = "│"
     elseif lnum == new_line then
       sign = "╭"
     elseif lnum == last then

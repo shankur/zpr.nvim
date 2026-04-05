@@ -62,9 +62,9 @@ end
 -- Single-line: "  💬 :5 "   Range: "  💬 [5–8] "
 local function comment_prefix(new_line, new_line_end)
   if new_line_end and new_line_end > new_line then
-    return ("  💬 [%d–%d] "):format(new_line, new_line_end)
+    return ("   [%d–%d] "):format(new_line, new_line_end)
   end
-  return ("  💬 :%d "):format(new_line)
+  return ("   :%d "):format(new_line)
 end
 
 -- Render the comment virt_line below `line_0` (0-based) in the after buffer.

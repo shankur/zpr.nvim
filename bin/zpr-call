@@ -1,0 +1,62 @@
+#!/usr/bin/env python3
+"""
+zpr-call: send an RPC call to the running Neovim instance hosting zpr.
+
+Usage:
+  zpr-call <method> [json-params]
+
+Examples:
+  zpr-call ping
+  zpr-call status
+  zpr-call next_hunk
+  zpr-call open_file '{"file_path":"src/foo.py","hunks":["@@ -1,3 +1,4 @@\\n-old\\n+new"]}'
+"""
+
+import sys
+import json
+import subprocess
+import os
+
+
+def main():
+    if len(sys.argv) < 2:
+        print("usage: zpr-call <method> [json-params]", file=sys.stderr)
+        sys.exit(1)
+
+    socket_file = os.path.expanduser("~/.local/state/zpr/nvim.sock")
+    if not os.path.exists(socket_file):
+        print(f"zpr: no socket file found at {socket_file}", file=sys.stderr)
+        print("Is Neovim running with zpr loaded?", file=sys.stderr)
+        sys.exit(1)
+
+    with open(socket_file) as f:
+        nvim_socket = f.read().strip()
+
+    method = sys.argv[1]
+    params = json.loads(sys.argv[2]) if len(sys.argv) > 2 else {}
+
+    payload = json.dumps({"method": method, "params": params})
+
+    # Write payload to a temp file to avoid shell quoting issues with
+    # special characters (single quotes, backslashes, etc.) in hunk content.
+    tmp = os.path.join(os.path.expanduser("~/.local/state/zpr"), "rpc_payload.json")
+    with open(tmp, "w") as f:
+        f.write(payload)
+
+    expr = f"v:lua.zpr_rpc_file('{tmp}')"
+
+    result = subprocess.run(
+        ["nvim", "--server", nvim_socket, "--remote-expr", expr],
+        capture_output=True,
+        text=True,
+    )
+
+    if result.returncode != 0:
+        print(result.stderr, file=sys.stderr)
+        sys.exit(result.returncode)
+
+    print(result.stdout.strip())
+
+
+if __name__ == "__main__":
+    main()

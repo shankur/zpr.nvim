@@ -1,0 +1,88 @@
+#!/usr/bin/env python3
+"""
+zpr-parse-diff: reads a unified diff from stdin, outputs JSON array of files with hunks.
+
+Output format:
+[
+  {
+    "file_path": "src/foo.py",
+    "status": "modified",   // modified | added | deleted | renamed
+    "hunks": ["@@ -1,3 +1,4 @@\n-old\n+new\n ctx", ...]
+  },
+  ...
+]
+"""
+
+import sys
+import json
+
+
+def parse_diff(text):
+    files = []
+    current_file = None
+    current_status = "modified"
+    current_hunks = []
+    current_hunk_lines = []
+
+    for line in text.splitlines():
+        if line.startswith("diff --git "):
+            # Save previous file
+            if current_file is not None:
+                if current_hunk_lines:
+                    current_hunks.append("\n".join(current_hunk_lines))
+                if current_hunks:
+                    files.append({
+                        "file_path": current_file,
+                        "status": current_status,
+                        "hunks": current_hunks,
+                    })
+            current_file = None
+            current_status = "modified"
+            current_hunks = []
+            current_hunk_lines = []
+
+        elif line.startswith("new file mode"):
+            current_status = "added"
+
+        elif line.startswith("deleted file mode"):
+            current_status = "deleted"
+
+        elif line.startswith("rename to "):
+            current_status = "renamed"
+            current_file = line[len("rename to "):]
+
+        elif line.startswith("+++ b/"):
+            current_file = line[6:]
+
+        elif line.startswith("+++ /dev/null"):
+            current_status = "deleted"
+
+        elif line.startswith("@@ "):
+            # Start of a new hunk
+            if current_hunk_lines:
+                current_hunks.append("\n".join(current_hunk_lines))
+            current_hunk_lines = [line]
+
+        elif current_hunk_lines:
+            # Inside a hunk: context, added, removed lines
+            if line.startswith(("+", "-", " ", "\\")):
+                current_hunk_lines.append(line)
+
+    # Flush last file
+    if current_file is not None:
+        if current_hunk_lines:
+            current_hunks.append("\n".join(current_hunk_lines))
+        if current_hunks:
+            files.append({
+                "file_path": current_file,
+                "status": current_status,
+                "hunks": current_hunks,
+            })
+
+    return files
+
+
+if __name__ == "__main__":
+    raw = sys.stdin.read()
+    result = parse_diff(raw)
+    print(json.dumps(result, indent=2))

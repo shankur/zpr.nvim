@@ -4,12 +4,12 @@
 
 local M = {}
 
-local state_dir = vim.fn.expand("~/.local/state/zpr")
-local socket_file = state_dir .. "/nvim.sock"
+local cfg = require("zpr.config")
+local socket_file = cfg.socket_file()
 
 -- Write Neovim's server address to a well-known path so Claude can find it.
 function M.publish_socket()
-  vim.fn.mkdir(state_dir, "p")
+  vim.fn.mkdir(cfg.config_dir(), "p")
   local addr = vim.v.servername
   if addr == "" then
     -- Neovim wasn't started with --listen; start a server on a fixed socket.

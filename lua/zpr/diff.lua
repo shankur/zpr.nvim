@@ -11,8 +11,10 @@ if not _G.zpr_state then
     repo_path  = nil,
     base_ref   = nil,
     head_ref   = nil,
-    hunks      = {},    -- parsed hunk tables (for position/count info)
+    hunks      = {},    -- parsed hunk tables for the current file
     hunk_index = 0,
+    files      = {},    -- all files in the current commit/PR
+    file_index = 0,
     left_buf   = nil,
     right_buf  = nil,
     left_win   = nil,
@@ -70,15 +72,17 @@ end
 
 -- Update status lines with file + hunk position
 local function update_statuslines()
-  local file  = review.file_path or ""
-  local idx   = review.hunk_index
-  local total = #review.hunks
-  local pos   = total > 0 and ("  [%d/%d]"):format(idx, total) or ""
+  local file      = review.file_path or ""
+  local file_pos  = #review.files > 0
+    and (" [%d/%d]"):format(review.file_index, #review.files) or ""
+  local hunk_pos  = #review.hunks > 0
+    and ("  hunk %d/%d"):format(review.hunk_index, #review.hunks) or ""
+  local info = file_pos .. "  " .. file .. hunk_pos
   if review.left_win and vim.api.nvim_win_is_valid(review.left_win) then
-    vim.wo[review.left_win].statusline  = (" BEFORE  %s%s"):format(file, pos)
+    vim.wo[review.left_win].statusline  = (" BEFORE " .. info)
   end
   if review.right_win and vim.api.nvim_win_is_valid(review.right_win) then
-    vim.wo[review.right_win].statusline = (" AFTER   %s%s"):format(file, pos)
+    vim.wo[review.right_win].statusline = (" AFTER  " .. info)
   end
 end
 
@@ -94,6 +98,15 @@ end
 
 -- Open or reuse the split layout
 local function open_layout(before_lines, after_lines, file_path)
+  -- Always scan for existing zpr windows by buffer name — stored handles
+  -- may be stale after a module reload (_G.zpr_state reset).
+  local existing = find_zpr_wins()
+  for _, win in ipairs(existing) do
+    local name = vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(win))
+    if name:match("zpr://before$") then review.left_win  = win end
+    if name:match("zpr://after$")  then review.right_win = win end
+  end
+
   local left_valid  = review.left_win  and vim.api.nvim_win_is_valid(review.left_win)
   local right_valid = review.right_win and vim.api.nvim_win_is_valid(review.right_win)
 
@@ -104,10 +117,9 @@ local function open_layout(before_lines, after_lines, file_path)
   setup_diff_buf(review.right_buf, after_lines,  file_path)
 
   if left_valid and right_valid then
-    -- Reuse existing windows: refresh buffer content, re-run diffthis
+    -- Reuse existing windows: point them at the updated buffers
     vim.api.nvim_win_set_buf(review.left_win,  review.left_buf)
     vim.api.nvim_win_set_buf(review.right_win, review.right_buf)
-    -- Reset diff state so Neovim recomputes the diff
     for _, win in ipairs({ review.left_win, review.right_win }) do
       vim.api.nvim_win_call(win, function() vim.cmd("diffoff") end)
     end
@@ -136,20 +148,17 @@ local function open_layout(before_lines, after_lines, file_path)
   vim.api.nvim_win_call(review.left_win, function() vim.cmd("syncbind") end)
 
   update_statuslines()
+
+  -- Notify init.lua to wire keymaps on the fresh buffers
+  vim.api.nvim_exec_autocmds("User", { pattern = "ZprLayoutReady", modeline = false })
 end
 
--- Jump to hunk position in both windows
-local function jump_to_hunk(hunk)
-  if review.left_win and vim.api.nvim_win_is_valid(review.left_win) then
-    pcall(vim.api.nvim_win_set_cursor, review.left_win,
-      { math.max(1, hunk.old_start), 0 })
-    vim.api.nvim_win_call(review.left_win, function() vim.cmd("normal! zz") end)
-  end
-  if review.right_win and vim.api.nvim_win_is_valid(review.right_win) then
-    pcall(vim.api.nvim_win_set_cursor, review.right_win,
-      { math.max(1, hunk.new_start), 0 })
-    vim.api.nvim_win_call(review.right_win, function() vim.cmd("normal! zz") end)
-  end
+-- Jump to next/prev hunk using Neovim's built-in diff motions.
+-- Uses feedkeys so ]c/[c executes in the current focused window,
+-- which is required for diff motions to work correctly.
+local function jump_diff(direction)
+  local keys = vim.api.nvim_replace_termcodes(direction .. "zz", true, false, true)
+  vim.api.nvim_feedkeys(keys, "n", false)
 end
 
 -- Public: open a file and show its full before/after via git
@@ -164,24 +173,25 @@ function M.open_file(params)
     return { error = "open_file requires repo_path, base_ref, and head_ref" }
   end
 
-  -- Fetch file content from git (blocking — runs before vim.schedule)
-  local before_lines, err1 = git_file_lines(repo_path, base_ref, file_path)
-  if not before_lines then
-    return { error = "git show before failed: " .. (err1 or "") }
-  end
+  -- Fetch file content from git (blocking — runs before vim.schedule).
+  -- For added files the before ref won't exist; for deleted files the after
+  -- ref won't exist. Use empty content for the missing side.
+  local before_lines = git_file_lines(repo_path, base_ref, file_path) or {}
+  local after_lines  = git_file_lines(repo_path, head_ref, file_path) or {}
 
-  local after_lines, err2 = git_file_lines(repo_path, head_ref, file_path)
-  if not after_lines then
-    return { error = "git show after failed: " .. (err2 or "") }
-  end
-
-  -- Parse hunk headers for position/count info
+  -- Update review state
   review.file_path  = file_path
   review.repo_path  = repo_path
   review.base_ref   = base_ref
   review.head_ref   = head_ref
   review.hunks      = {}
   review.hunk_index = 0
+
+  -- Store the full file list when provided (first open_file call for a commit)
+  if params.files then
+    review.files      = params.files
+    review.file_index = params.file_index or 1
+  end
 
   for _, h in ipairs(params.hunks or {}) do
     table.insert(review.hunks, parse_hunk_header(h))
@@ -194,17 +204,51 @@ function M.open_file(params)
     end
   end)
 
-  return { file = file_path, hunk_count = #review.hunks }
+  return { file = file_path, file_index = review.file_index, file_total = #review.files, hunk_count = #review.hunks }
+end
+
+-- Public: jump to next file in the commit
+function M.next_file(_params)
+  if #review.files == 0 then return { error = "no file list loaded" } end
+  if review.file_index >= #review.files then
+    return { error = "already at last file" }
+  end
+  review.file_index = review.file_index + 1
+  local f = review.files[review.file_index]
+  return M.open_file({
+    file_path  = f.file_path,
+    hunks      = f.hunks,
+    repo_path  = review.repo_path,
+    base_ref   = review.base_ref,
+    head_ref   = review.head_ref,
+    file_index = review.file_index,
+  })
+end
+
+-- Public: jump to previous file in the commit
+function M.prev_file(_params)
+  if #review.files == 0 then return { error = "no file list loaded" } end
+  if review.file_index <= 1 then
+    return { error = "already at first file" }
+  end
+  review.file_index = review.file_index - 1
+  local f = review.files[review.file_index]
+  return M.open_file({
+    file_path  = f.file_path,
+    hunks      = f.hunks,
+    repo_path  = review.repo_path,
+    base_ref   = review.base_ref,
+    head_ref   = review.head_ref,
+    file_index = review.file_index,
+  })
 end
 
 -- Public: jump to next hunk
 function M.next_hunk(_params)
   if #review.hunks == 0 then return { error = "no hunks loaded" } end
   review.hunk_index = math.min(review.hunk_index + 1, #review.hunks)
-  vim.schedule(function()
-    jump_to_hunk(review.hunks[review.hunk_index])
-    update_statuslines()
-  end)
+  jump_diff("]c")
+  update_statuslines()
   return { hunk = review.hunk_index, total = #review.hunks }
 end
 
@@ -212,10 +256,8 @@ end
 function M.prev_hunk(_params)
   if #review.hunks == 0 then return { error = "no hunks loaded" } end
   review.hunk_index = math.max(review.hunk_index - 1, 1)
-  vim.schedule(function()
-    jump_to_hunk(review.hunks[review.hunk_index])
-    update_statuslines()
-  end)
+  jump_diff("[c")
+  update_statuslines()
   return { hunk = review.hunk_index, total = #review.hunks }
 end
 

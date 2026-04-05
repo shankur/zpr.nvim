@@ -23,7 +23,8 @@ def main():
         print("usage: zpr-call <method> [json-params]", file=sys.stderr)
         sys.exit(1)
 
-    socket_file = os.path.expanduser("~/.local/state/zpr/nvim.sock")
+    config_dir = os.environ.get("ZPR_CONFIG_DIR", os.path.expanduser("~/.zpr"))
+    socket_file = os.path.join(config_dir, "nvim.sock")
     if not os.path.exists(socket_file):
         print(f"zpr: no socket file found at {socket_file}", file=sys.stderr)
         print("Is Neovim running with zpr loaded?", file=sys.stderr)
@@ -39,7 +40,7 @@ def main():
 
     # Write payload to a temp file to avoid shell quoting issues with
     # special characters (single quotes, backslashes, etc.) in hunk content.
-    tmp = os.path.join(os.path.expanduser("~/.local/state/zpr"), "rpc_payload.json")
+    tmp = os.path.join(config_dir, "rpc_payload.json")
     with open(tmp, "w") as f:
         f.write(payload)
 

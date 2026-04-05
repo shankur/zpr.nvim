@@ -14,6 +14,9 @@ function M.setup()
   vim.api.nvim_set_hl(0, "ZprFileHeader", { fg = "#c678dd", bg = "#1e1e2e", bold = true })
   -- Status line info
   vim.api.nvim_set_hl(0, "ZprStatus", { fg = "#98c379", bold = true })
+  -- Inline review comments
+  vim.api.nvim_set_hl(0, "ZprComment",    { fg = "#e5c07b", italic = true })
+  vim.api.nvim_set_hl(0, "ZprCommentBar", { fg = "#61afef", bold = true })
 end
 
 return M

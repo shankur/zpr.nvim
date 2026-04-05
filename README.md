@@ -88,6 +88,21 @@ Reads a unified diff from stdin and outputs a JSON array of files with hunks:
 git diff HEAD~1 HEAD | zpr-parse-diff
 ```
 
+### `zpr-push-review`
+
+Pushes the inline comments from the current review to GitHub as a PR review:
+
+```sh
+zpr-push-review 42
+zpr-push-review 42 --event APPROVE
+zpr-push-review 42 --event REQUEST_CHANGES --body "A few things to address"
+zpr-push-review 42 --repo-path /path/to/repo   # override cwd
+```
+
+Reads comment from `$ZPR_CONFIG_DIR/reviews/` and posts them via `gh api`. Requires the `gh` CLI to be authenticated.
+
+> **Note**: GitHub only accepts review comments on lines that are part of the PR diff. Comments on unchanged context lines will cause the API call to fail.
+
 ### `zpr-call`
 
 Sends an RPC call to the running Neovim instance:
@@ -124,6 +139,8 @@ zpr-call open_file '{
 | `:ZprClose` | Close review |
 | `:ZprStatus` | Show current file / hunk / comment count |
 | `:ZprReload` | Hot-reload all plugin modules |
+| `:ZprPushReview <n>` | Push inline comments to GitHub PR #n |
+| `:ZprPushReview! <n>` | Same, but submit as REQUEST_CHANGES |
 
 ## Comment storage
 
@@ -149,4 +166,5 @@ lua/zpr/
 bin/
   zpr-call            send RPC calls from the terminal
   zpr-parse-diff      parse unified diffs to JSON
+  zpr-push-review     push zpr comments to a GitHub PR review
 ```

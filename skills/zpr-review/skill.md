@@ -104,3 +104,19 @@ After all comments are placed, summarize:
 - Any overall concerns about the change
 
 Remind the user they can navigate with `]f`/`[f` (files), `]h`/`[h` (hunks), and `<leader>zt` to open the sidebar showing the full review order.
+
+## Step 8 — Optionally push to GitHub
+
+If the target was a PR (not just a commit), ask the user:
+
+> "Would you like to push these comments to GitHub as a PR review?"
+
+If yes, run:
+
+```sh
+/Users/ansharma/Repository/zpr/bin/zpr-push-review <pr-number>
+```
+
+Or from Neovim: `:ZprPushReview <pr-number>` (use `:ZprPushReview! <pr-number>` to submit as REQUEST_CHANGES instead of COMMENT).
+
+Note: GitHub only accepts review comments on lines that appear in the PR diff. Comments you placed on unchanged context lines will cause the API call to fail — remove them first or re-add them on a changed line.

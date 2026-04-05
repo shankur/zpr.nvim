@@ -2,6 +2,10 @@
 
 local M = {}
 
+-- Absolute path to the plugin root (used to locate bin/ scripts)
+local _plugin_root = vim.fn.fnamemodify(
+  debug.getinfo(1, "S").source:sub(2), ":h:h:h")
+
 -- RPC method registry — Claude calls these via zpr_rpc()
 M.handlers = {}
 
@@ -24,9 +28,30 @@ function M.setup()
   M.handlers["get_comments"]   = function(_) return comments().get_all() end
   M.handlers["clear_comments"] = function(_) comments().clear(); return {} end
   M.handlers["add_comment"]    = function(p)
+    local hunks = diff().review.hunks
+    if hunks and #hunks > 0 then
+      local in_diff = false
+      for _, h in ipairs(hunks) do
+        if h.new_count > 0 and p.line >= h.new_start and p.line <= h.new_end then
+          in_diff = true; break
+        end
+      end
+      if not in_diff then
+        return { ok = false, error = ("line %d is outside the diff"):format(p.line) }
+      end
+    end
     local ok = comments().add_direct(
       p.file_path, p.line, p.line_end, p.hunk_index or 1, p.body)
     return { ok = ok }
+  end
+  M.handlers["state"]          = function(_)
+    local r = diff().review
+    return {
+      repo_path = r.repo_path,
+      base_ref  = r.base_ref,
+      head_ref  = r.head_ref,
+      file_path = r.file_path,
+    }
   end
   M.handlers["status"]         = function(_)
     local r = diff().review
@@ -77,6 +102,20 @@ function M.setup()
     vim.keymap.set("n", "[f", function() diff().prev_file({}) end, vim.tbl_extend("force", opts, { desc = "zpr: prev file" }))
     vim.keymap.set("n", "q",  function() diff().close()       end, vim.tbl_extend("force", opts, { desc = "zpr: close review" }))
 
+    -- Returns true when `line` (1-based, new file) falls inside at least one
+    -- hunk range for the current file.  When no hunks are loaded we allow it
+    -- so the plugin still works outside a normal review flow.
+    local function line_in_diff(line)
+      local hunks = diff().review.hunks
+      if not hunks or #hunks == 0 then return true end
+      for _, h in ipairs(hunks) do
+        if h.new_count > 0 and line >= h.new_start and line <= h.new_end then
+          return true
+        end
+      end
+      return false
+    end
+
     -- Helper: check we're in the after pane, then add/edit a comment
     local function comment_on_range(line_start, line_end)
       local buf_name = vim.api.nvim_buf_get_name(buf)
@@ -85,6 +124,12 @@ function M.setup()
         return
       end
       local r = diff().review
+      if not line_in_diff(line_start) then
+        vim.notify(
+          ("[zpr] line %d is outside the diff — GitHub review comments must be on lines within a hunk"):format(line_start),
+          vim.log.levels.WARN)
+        return
+      end
       -- line_end is nil for single-line; only set when it differs from start
       local end_line = (line_end and line_end > line_start) and line_end or nil
       if comments().find_at(r.file_path, line_start) then
@@ -165,6 +210,28 @@ function M.setup()
   vim.api.nvim_create_user_command("ZprSidebar", function()
     require("zpr.sidebar").toggle()
   end, { desc = "zpr: toggle file/hunk sidebar" })
+
+  vim.api.nvim_create_user_command("ZprPushReview", function(opts)
+    local pr = vim.trim(opts.args)
+    if pr == "" then
+      vim.notify("[zpr] usage: :ZprPushReview <pr-number>", vim.log.levels.WARN)
+      return
+    end
+    local script = _plugin_root .. "/bin/zpr-push-review"
+    local event  = opts.bang and "REQUEST_CHANGES" or "COMMENT"
+    vim.fn.jobstart({ script, pr, "--event", event }, {
+      stdout_buffered = true,
+      stderr_buffered = true,
+      on_stdout = function(_, data)
+        local msg = vim.trim(table.concat(data, "\n"))
+        if msg ~= "" then vim.notify("[zpr] " .. msg, vim.log.levels.INFO) end
+      end,
+      on_stderr = function(_, data)
+        local msg = vim.trim(table.concat(data, "\n"))
+        if msg ~= "" then vim.notify("[zpr] " .. msg, vim.log.levels.WARN) end
+      end,
+    })
+  end, { nargs = 1, bang = true, desc = "zpr: push review comments to GitHub PR (! = REQUEST_CHANGES)" })
 
   vim.api.nvim_create_user_command("ZprReload", function()
     _G.zpr_state = nil

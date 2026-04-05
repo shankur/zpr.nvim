@@ -1,0 +1,185 @@
+#!/usr/bin/env python3
+"""
+zpr-push-review: push zpr inline comments to a GitHub PR as a review.
+
+Usage:
+  zpr-push-review <pr-number> [--event COMMENT|APPROVE|REQUEST_CHANGES]
+                               [--body "Overall review comment"]
+                               [--repo-path /path/to/repo]
+
+Reads comments from $ZPR_CONFIG_DIR/reviews/ (default: ~/.zpr/reviews/)
+and posts them to the GitHub PR review API using the `gh` CLI.
+
+Line numbers in zpr comments map to the "RIGHT" side (new file) of the diff.
+GitHub will reject comments on lines not present in the PR diff — those will
+be reported and skipped.
+"""
+
+import sys
+import json
+import subprocess
+import os
+import re
+import argparse
+
+
+def run(cmd, stdin_data=None, check=True):
+    result = subprocess.run(cmd, capture_output=True, text=True, input=stdin_data)
+    if check and result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or result.stdout.strip())
+    return result
+
+
+def get_pr_info(pr_number):
+    r = run(["gh", "pr", "view", str(pr_number),
+             "--json", "headRefOid,headRefName,number,title"])
+    return json.loads(r.stdout)
+
+
+def get_repo_name():
+    r = run(["gh", "repo", "view", "--json", "nameWithOwner"])
+    return json.loads(r.stdout)["nameWithOwner"]
+
+
+def get_repo_path():
+    r = run(["git", "rev-parse", "--show-toplevel"])
+    return r.stdout.strip()
+
+
+def comments_file_path(config_dir, repo_path, ref):
+    """Mirror the path logic in config.lua."""
+    repo_name = os.path.basename(repo_path.rstrip("/"))
+    key = re.sub(r'[/~:^ \t\n\r]', '-', ref)
+    return os.path.join(config_dir, "reviews", repo_name, f"comments_{key}.json")
+
+
+def load_comments(path):
+    if not os.path.exists(path):
+        return []
+    with open(path) as f:
+        return json.load(f)
+
+
+def to_github_comment(c):
+    """Convert a zpr comment record to the GitHub PR review comment format."""
+    new_line     = c.get("new_line") or c.get("line")
+    new_line_end = c.get("new_line_end") or c.get("line_end")
+
+    gc = {
+        "path": c["file"],
+        "body": c["body"],
+        "side": "RIGHT",
+    }
+    if new_line_end and new_line_end > new_line:
+        gc["start_line"] = new_line
+        gc["start_side"] = "RIGHT"
+        gc["line"]       = new_line_end
+    else:
+        gc["line"] = new_line
+    return gc
+
+
+def post_review(repo_name, pr_number, head_sha, gh_comments, event, body):
+    payload = {
+        "commit_id": head_sha,
+        "event":     event,
+        "comments":  gh_comments,
+    }
+    if body:
+        payload["body"] = body
+
+    r = run(
+        ["gh", "api",
+         f"repos/{repo_name}/pulls/{pr_number}/reviews",
+         "--method", "POST",
+         "--input", "-"],
+        stdin_data=json.dumps(payload),
+    )
+    return json.loads(r.stdout)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Push zpr inline comments to a GitHub PR review")
+    parser.add_argument("pr_number", type=int, help="PR number")
+    parser.add_argument(
+        "--event", default="COMMENT",
+        choices=["COMMENT", "APPROVE", "REQUEST_CHANGES"],
+        help="Review event type (default: COMMENT)")
+    parser.add_argument("--body", default="",
+                        help="Optional top-level review body")
+    parser.add_argument("--repo-path", default=None,
+                        help="Path to the git repo (default: cwd)")
+    args = parser.parse_args()
+
+    config_dir = os.environ.get("ZPR_CONFIG_DIR", os.path.expanduser("~/.zpr"))
+
+    # --- Resolve repo path ---
+    try:
+        repo_path = args.repo_path or get_repo_path()
+    except RuntimeError as e:
+        print(f"zpr: could not determine repo path: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # --- Fetch PR metadata ---
+    try:
+        pr_info = get_pr_info(args.pr_number)
+    except RuntimeError as e:
+        print(f"zpr: could not fetch PR #{args.pr_number}: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    head_sha = pr_info["headRefOid"]
+    head_ref = pr_info["headRefName"]
+    print(f"PR #{pr_info['number']}: {pr_info['title']}")
+    print(f"Head: {head_ref} ({head_sha[:8]})")
+
+    # --- Load comments (try branch name then SHA) ---
+    comments = []
+    tried = []
+    for ref in [head_ref, head_sha]:
+        path = comments_file_path(config_dir, repo_path, ref)
+        tried.append(path)
+        loaded = load_comments(path)
+        if loaded:
+            comments = loaded
+            print(f"Loaded {len(comments)} comment(s) from {path}")
+            break
+
+    if not comments:
+        print("No comments to push. Looked in:")
+        for p in tried:
+            print(f"  {p}")
+        sys.exit(0)
+
+    # --- Resolve GitHub repo ---
+    try:
+        repo_name = get_repo_name()
+    except RuntimeError as e:
+        print(f"zpr: could not determine GitHub repo: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    gh_comments = [to_github_comment(c) for c in comments]
+    print(f"Pushing {len(gh_comments)} comment(s) to {repo_name}#{args.pr_number}...")
+
+    # --- Post review ---
+    try:
+        data = post_review(repo_name, args.pr_number, head_sha,
+                           gh_comments, args.event, args.body)
+    except RuntimeError as e:
+        err = str(e)
+        print(f"zpr: GitHub API error: {err}", file=sys.stderr)
+        if "not part of the pull request" in err or "pull_request_review_thread.line" in err:
+            print(
+                "\nHint: one or more comments are on lines not present in the PR diff.\n"
+                "GitHub only accepts review comments on lines changed by the PR.\n"
+                "Re-run with --skip-invalid once that flag is supported, or remove\n"
+                "comments on unchanged context lines before pushing.",
+                file=sys.stderr)
+        sys.exit(1)
+
+    review_url = data.get("html_url", "")
+    print(f"Review submitted: {review_url}")
+
+
+if __name__ == "__main__":
+    main()

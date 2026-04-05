@@ -39,11 +39,19 @@ end
 -- Exported so sidebar.lua can display hunk headers from raw hunk strings.
 function M.parse_hunk_header(hunk_text)
   local first = hunk_text:match("^[^\n]*")
-  local old_start, new_start = first:match("@@ %-(%d+)[,%d]* %+(%d+)")
+  local old_start, old_count, new_start, new_count =
+    first:match("@@ %-(%d+),?(%d*) %+(%d+),?(%d*)")
+  -- omitted count means 1; explicit 0 means an empty side (pure add/delete)
+  old_count = old_count ~= "" and tonumber(old_count) or 1
+  new_count = new_count ~= "" and tonumber(new_count) or 1
+  local ns  = tonumber(new_start) or 1
   return {
     header    = first,
     old_start = tonumber(old_start) or 1,
-    new_start = tonumber(new_start) or 1,
+    old_count = old_count,
+    new_start = ns,
+    new_count = new_count,
+    new_end   = ns + math.max(new_count - 1, 0),
   }
 end
 

@@ -8,6 +8,7 @@ local M = {}
 local cfg = require("zpr.config")
 local ns_comment = vim.api.nvim_create_namespace("zpr_comments")
 local ns_filler  = vim.api.nvim_create_namespace("zpr_fillers")
+local ns_lines   = vim.api.nvim_create_namespace("zpr_comment_lines")
 
 if not _G.zpr_state then _G.zpr_state = {} end
 if not _G.zpr_state.comments then _G.zpr_state.comments = {} end
@@ -96,6 +97,32 @@ local function map_to_old_line(new_line, hunk)
   return math.max(1, hunk.old_start + offset)
 end
 
+-- Highlight the source lines the comment refers to with a background tint
+-- and a sign column glyph. Returns a list of extmark IDs.
+local function render_comment_lines(buf, new_line, new_line_end)
+  local last = new_line_end or new_line
+  local ids  = {}
+  for lnum = new_line, last do
+    local sign
+    if new_line == last then
+      sign = "💬"
+    elseif lnum == new_line then
+      sign = "╭"
+    elseif lnum == last then
+      sign = "╰"
+    else
+      sign = "│"
+    end
+    local id = vim.api.nvim_buf_set_extmark(buf, ns_lines, lnum - 1, 0, {
+      sign_text     = sign,
+      sign_hl_group = "ZprCommentBar",
+      line_hl_group = "ZprCommentLine",
+    })
+    table.insert(ids, id)
+  end
+  return ids
+end
+
 -- Place the comment extmark and filler, returning their IDs.
 local function place(after_buf, before_buf, new_line, new_line_end, old_line, body)
   -- Anchor below the last line of the range (0-based)
@@ -104,7 +131,8 @@ local function place(after_buf, before_buf, new_line, new_line_end, old_line, bo
   local before_lines = vim.api.nvim_buf_line_count(before_buf)
   local filler_line  = math.min(old_line - 1, math.max(0, before_lines - 1))
   local filler_id    = before_lines > 0 and render_filler(before_buf, filler_line) or nil
-  return comment_id, filler_id
+  local line_ids     = render_comment_lines(after_buf, new_line, new_line_end)
+  return comment_id, filler_id, line_ids
 end
 
 -- Re-render all stored comments for the current file.
@@ -117,7 +145,7 @@ function M.render_all(file_path)
   vim.api.nvim_buf_clear_namespace(before_buf, ns_filler,  0, -1)
   for _, c in ipairs(comments()) do
     if c.file == file_path then
-      c.comment_id, c.filler_id = place(
+      c.comment_id, c.filler_id, c.line_ids = place(
         after_buf, before_buf, c.new_line, c.new_line_end, c.old_line, c.body)
       c.after_buf  = after_buf
       c.before_buf = before_buf
@@ -144,7 +172,7 @@ function M.add(file_path, new_line, new_line_end, hunk_index, hunk)
       -- Anchor old_line to the end of the range
       local anchor_line = new_line_end or new_line
       local old_line    = map_to_old_line(anchor_line, hunk)
-      local comment_id, filler_id = place(
+      local comment_id, filler_id, line_ids = place(
         after_buf, before_buf, new_line, new_line_end, old_line, text)
 
       table.insert(comments(), {
@@ -156,6 +184,7 @@ function M.add(file_path, new_line, new_line_end, hunk_index, hunk)
         hunk_index   = hunk_index,
         comment_id   = comment_id,
         filler_id    = filler_id,
+        line_ids     = line_ids,
         after_buf    = after_buf,
         before_buf   = before_buf,
       })
@@ -194,11 +223,10 @@ function M.edit_at(file_path, new_line)
     end
     vim.schedule(function()
       c.body = text
-      if c.after_buf and vim.api.nvim_buf_is_valid(c.after_buf) and c.comment_id then
+      if c.after_buf and vim.api.nvim_buf_is_valid(c.after_buf) then
         pcall(vim.api.nvim_buf_del_extmark, c.after_buf, ns_comment, c.comment_id)
       end
-      c.comment_id = render_comment(
-        c.after_buf, (last) - 1, text, c.new_line, c.new_line_end)
+      c.comment_id = render_comment(c.after_buf, last - 1, text, c.new_line, c.new_line_end)
       save()
     end)
   end)
@@ -212,6 +240,9 @@ function M.delete_at(after_buf, file_path, new_line)
     if not deleted and c.file == file_path and c.new_line == new_line then
       pcall(vim.api.nvim_buf_del_extmark, after_buf, ns_comment, c.comment_id)
       pcall(vim.api.nvim_buf_del_extmark, c.before_buf or after_buf, ns_filler, c.filler_id)
+      for _, id in ipairs(c.line_ids or {}) do
+        pcall(vim.api.nvim_buf_del_extmark, after_buf, ns_lines, id)
+      end
       deleted = true
     else
       table.insert(remaining, c)
@@ -241,6 +272,9 @@ function M.clear()
   for _, c in ipairs(comments()) do
     pcall(vim.api.nvim_buf_del_extmark, c.after_buf,  ns_comment, c.comment_id)
     pcall(vim.api.nvim_buf_del_extmark, c.before_buf, ns_filler,  c.filler_id)
+    for _, id in ipairs(c.line_ids or {}) do
+      pcall(vim.api.nvim_buf_del_extmark, c.after_buf, ns_lines, id)
+    end
   end
   _G.zpr_state.comments = {}
   save()

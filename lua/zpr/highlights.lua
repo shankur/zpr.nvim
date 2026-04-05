@@ -15,8 +15,10 @@ function M.setup()
   -- Status line info
   vim.api.nvim_set_hl(0, "ZprStatus", { fg = "#98c379", bold = true })
   -- Inline review comments
-  vim.api.nvim_set_hl(0, "ZprComment",    { fg = "#e5c07b", italic = true })
-  vim.api.nvim_set_hl(0, "ZprCommentBar", { fg = "#61afef", bold = true })
+  vim.api.nvim_set_hl(0, "ZprComment",     { fg = "#e5c07b", italic = true })
+  vim.api.nvim_set_hl(0, "ZprCommentBar",  { fg = "#61afef", bold = true })
+  -- Commented source lines: subtle amber tint + sign column glyph
+  vim.api.nvim_set_hl(0, "ZprCommentLine", { bg = "#2d2a1e" })
 end
 
 return M

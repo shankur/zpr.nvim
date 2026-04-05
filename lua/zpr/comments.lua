@@ -145,6 +145,39 @@ function M.add(file_path, new_line, hunk_index, hunk)
   end)
 end
 
+-- Return the comment on new_line (1-based) for the given file, or nil.
+function M.find_at(file_path, new_line)
+  for _, c in ipairs(comments()) do
+    if c.file == file_path and c.new_line == new_line then return c end
+  end
+end
+
+-- Edit the comment on new_line interactively (pre-filled with existing body).
+function M.edit_at(file_path, new_line)
+  local c = M.find_at(file_path, new_line)
+  if not c then return end
+
+  local prompt = ("Edit comment [%s:%d]: "):format(
+    vim.fn.fnamemodify(file_path, ":t"), new_line)
+
+  vim.ui.input({ prompt = prompt, default = c.body }, function(text)
+    if not text then return end          -- cancelled
+    if vim.trim(text) == "" then        -- blanked out → delete
+      M.delete_at(c.after_buf, file_path, new_line)
+      return
+    end
+    vim.schedule(function()
+      c.body = text
+      -- Re-render just this comment's extmark
+      if c.after_buf and vim.api.nvim_buf_is_valid(c.after_buf) and c.comment_id then
+        pcall(vim.api.nvim_buf_del_extmark, c.after_buf, ns_comment, c.comment_id)
+      end
+      c.comment_id = render_comment(c.after_buf, new_line - 1, text)
+      save()
+    end)
+  end)
+end
+
 -- Delete the comment on new_line (1-based) in the after buffer
 function M.delete_at(after_buf, file_path, new_line)
   local remaining = {}

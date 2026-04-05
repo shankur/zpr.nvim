@@ -72,18 +72,22 @@ function M.setup()
     vim.keymap.set("n", "[f", function() diff().prev_file({}) end, vim.tbl_extend("force", opts, { desc = "zpr: prev file" }))
     vim.keymap.set("n", "q",  function() diff().close()       end, vim.tbl_extend("force", opts, { desc = "zpr: close review" }))
 
-    -- <leader>c: add inline comment on current line (right/after buffer only)
+    -- <leader>c: add or edit inline comment on current line (right/after buffer only)
     vim.keymap.set("n", "<leader>c", function()
       local buf_name = vim.api.nvim_buf_get_name(buf)
       if not buf_name:match("zpr://after$") then
         vim.notify("[zpr] move to the AFTER (right) pane to add a comment", vim.log.levels.WARN)
         return
       end
-      local r = diff().review
+      local r    = diff().review
       local line = vim.api.nvim_win_get_cursor(0)[1]
-      local hunk = r.hunks and r.hunks[r.hunk_index]
-      comments().add(r.file_path, line, r.hunk_index, hunk)
-    end, vim.tbl_extend("force", opts, { desc = "zpr: add comment" }))
+      if comments().find_at(r.file_path, line) then
+        comments().edit_at(r.file_path, line)
+      else
+        local hunk = r.hunks and r.hunks[r.hunk_index]
+        comments().add(r.file_path, line, r.hunk_index, hunk)
+      end
+    end, vim.tbl_extend("force", opts, { desc = "zpr: add/edit comment" }))
 
     -- <leader>d: delete inline comment on current line
     vim.keymap.set("n", "<leader>d", function()

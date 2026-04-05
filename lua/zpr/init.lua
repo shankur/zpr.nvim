@@ -142,9 +142,29 @@ function M.setup()
     end,
   })
 
+  -- Sidebar: full refresh on file change, cursor-only refresh on hunk change
+  vim.api.nvim_create_autocmd("User", {
+    pattern  = "ZprFileChanged",
+    callback = function() require("zpr.sidebar").refresh() end,
+  })
+  vim.api.nvim_create_autocmd("User", {
+    pattern  = "ZprHunkChanged",
+    callback = function() require("zpr.sidebar").refresh_cursor() end,
+  })
+
+  -- <leader>zt: toggle sidebar (global keymap)
+  vim.keymap.set("n", "<leader>zt", function()
+    require("zpr.sidebar").toggle()
+  end, { silent = true, desc = "zpr: toggle sidebar" })
+
+  vim.api.nvim_create_user_command("ZprSidebar", function()
+    require("zpr.sidebar").toggle()
+  end, { desc = "zpr: toggle file/hunk sidebar" })
+
   vim.api.nvim_create_user_command("ZprReload", function()
     _G.zpr_state = nil
-    for _, mod in ipairs({ "zpr", "zpr.config", "zpr.diff", "zpr.comments", "zpr.server", "zpr.highlights" }) do
+    for _, mod in ipairs({ "zpr", "zpr.config", "zpr.diff", "zpr.comments",
+                           "zpr.server", "zpr.highlights", "zpr.sidebar" }) do
       package.loaded[mod] = nil
     end
     require("zpr").setup()

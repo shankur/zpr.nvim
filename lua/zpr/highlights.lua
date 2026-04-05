@@ -19,6 +19,12 @@ function M.setup()
   vim.api.nvim_set_hl(0, "ZprCommentBar",  { fg = "#61afef", bold = true })
   -- Commented source lines: subtle amber tint + sign column glyph
   vim.api.nvim_set_hl(0, "ZprCommentLine", { bg = "#2d2a1e" })
+  -- Sidebar
+  vim.api.nvim_set_hl(0, "ZprSidebarTitle",      { fg = "#c678dd", bold = true })
+  vim.api.nvim_set_hl(0, "ZprSidebarFile",        { fg = "#abb2bf" })
+  vim.api.nvim_set_hl(0, "ZprSidebarFileCurrent", { fg = "#61afef", bold = true, bg = "#1e2030" })
+  vim.api.nvim_set_hl(0, "ZprSidebarHunk",        { fg = "#5c6370", italic = true })
+  vim.api.nvim_set_hl(0, "ZprSidebarHunkCurrent", { fg = "#98c379", bold = true, bg = "#1e2d1e" })
 end
 
 return M

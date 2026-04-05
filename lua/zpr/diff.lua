@@ -35,8 +35,9 @@ local function git_file_lines(repo_path, ref, file_path)
   return result
 end
 
--- Parse the @@ header for hunk start positions (used for status / jump)
-local function parse_hunk_header(hunk_text)
+-- Parse the @@ header for hunk start positions (used for status / jump).
+-- Exported so sidebar.lua can display hunk headers from raw hunk strings.
+function M.parse_hunk_header(hunk_text)
   local first = hunk_text:match("^[^\n]*")
   local old_start, new_start = first:match("@@ %-(%d+)[,%d]* %+(%d+)")
   return {
@@ -86,12 +87,14 @@ local function update_statuslines()
   end
 end
 
--- Find all windows currently showing a zpr:// buffer
+-- Find the before/after diff windows (excludes sidebar and other zpr:// buffers)
 local function find_zpr_wins()
   local found = {}
   for _, win in ipairs(vim.api.nvim_list_wins()) do
     local name = vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(win))
-    if name:match("^zpr://") then table.insert(found, win) end
+    if name:match("^zpr://before$") or name:match("^zpr://after$") then
+      table.insert(found, win)
+    end
   end
   return found
 end
@@ -202,15 +205,23 @@ function M.open_file(params)
     require("zpr.comments").load()
   end
 
+  -- Unconditionally update file_index when provided (e.g. from sidebar)
+  if params.file_index then
+    review.file_index = params.file_index
+  end
+
   for _, h in ipairs(params.hunks or {}) do
-    table.insert(review.hunks, parse_hunk_header(h))
+    table.insert(review.hunks, M.parse_hunk_header(h))
   end
 
   vim.schedule(function()
     open_layout(before_lines, after_lines, file_path)
     if #review.hunks > 0 then
-      M.next_hunk({})
+      local target = math.max(1, math.min(params.start_hunk or 1, #review.hunks))
+      review.hunk_index = 0
+      for _ = 1, target do M.next_hunk({}) end
     end
+    vim.api.nvim_exec_autocmds("User", { pattern = "ZprFileChanged", modeline = false })
   end)
 
   return { file = file_path, file_index = review.file_index, file_total = #review.files, hunk_count = #review.hunks }
@@ -258,6 +269,7 @@ function M.next_hunk(_params)
   review.hunk_index = math.min(review.hunk_index + 1, #review.hunks)
   jump_diff("]c")
   update_statuslines()
+  vim.api.nvim_exec_autocmds("User", { pattern = "ZprHunkChanged", modeline = false })
   return { hunk = review.hunk_index, total = #review.hunks }
 end
 
@@ -267,6 +279,7 @@ function M.prev_hunk(_params)
   review.hunk_index = math.max(review.hunk_index - 1, 1)
   jump_diff("[c")
   update_statuslines()
+  vim.api.nvim_exec_autocmds("User", { pattern = "ZprHunkChanged", modeline = false })
   return { hunk = review.hunk_index, total = #review.hunks }
 end
 

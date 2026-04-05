@@ -176,7 +176,6 @@ function M.setup()
     vim.notify("[zpr] reloaded", vim.log.levels.INFO)
   end, { desc = "zpr: reload all modules" })
 
-  vim.notify("[zpr] ready — socket: " .. require("zpr.server").socket_path(), vim.log.levels.INFO)
 end
 
 return M

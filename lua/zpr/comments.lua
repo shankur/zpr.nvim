@@ -21,6 +21,20 @@ local function comments_path()
   return cfg.comments_file(s.repo_path, s.head_ref)
 end
 
+-- Load comments from disk into _G.zpr_state.comments.
+-- Called once per review open (when repo/ref changes).
+function M.load()
+  local path = comments_path()
+  if not path then return end
+  local f = io.open(path, "r")
+  if not f then return end
+  local raw = f:read("*a")
+  f:close()
+  local ok, data = pcall(vim.json.decode, raw)
+  if not ok or type(data) ~= "table" then return end
+  _G.zpr_state.comments = data
+end
+
 -- Persist serialisable fields to disk
 local function save()
   local path = comments_path()

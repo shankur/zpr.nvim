@@ -180,6 +180,9 @@ function M.open_file(params)
   local after_lines  = git_file_lines(repo_path, head_ref, file_path) or {}
 
   -- Update review state
+  -- Detect if this is a new review (different repo or ref) and reload comments
+  local new_review = (review.repo_path ~= repo_path or review.head_ref ~= head_ref)
+
   review.file_path  = file_path
   review.repo_path  = repo_path
   review.base_ref   = base_ref
@@ -191,6 +194,12 @@ function M.open_file(params)
   if params.files then
     review.files      = params.files
     review.file_index = params.file_index or 1
+  end
+
+  -- Load persisted comments when opening a new review
+  if new_review then
+    _G.zpr_state.comments = {}
+    require("zpr.comments").load()
   end
 
   for _, h in ipairs(params.hunks or {}) do

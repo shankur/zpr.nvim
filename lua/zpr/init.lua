@@ -90,14 +90,14 @@ function M.setup()
       end
     end
 
-    -- <leader>c (normal): add/edit comment on current line
-    vim.keymap.set("n", "<leader>c", function()
+    -- <leader>zc (normal): add/edit comment on current line
+    vim.keymap.set("n", "<leader>zc", function()
       local line = vim.api.nvim_win_get_cursor(0)[1]
       comment_on_range(line, nil)
     end, vim.tbl_extend("force", opts, { desc = "zpr: add/edit comment" }))
 
-    -- <leader>c (visual): add comment on selected line range
-    vim.keymap.set("v", "<leader>c", function()
+    -- <leader>zc (visual): add comment on selected line range
+    vim.keymap.set("v", "<leader>zc", function()
       -- Exit visual mode first so '< and '> marks are set
       local esc = vim.api.nvim_replace_termcodes("<Esc>", true, false, true)
       vim.api.nvim_feedkeys(esc, "x", false)
@@ -106,8 +106,8 @@ function M.setup()
       comment_on_range(line_start, line_end)
     end, vim.tbl_extend("force", opts, { desc = "zpr: add/edit range comment" }))
 
-    -- <leader>d: delete inline comment on current line (with confirmation)
-    vim.keymap.set("n", "<leader>d", function()
+    -- <leader>zd: delete inline comment on current line (with confirmation)
+    vim.keymap.set("n", "<leader>zd", function()
       local buf_name = vim.api.nvim_buf_get_name(buf)
       if not buf_name:match("zpr://after$") then return end
       local r    = diff().review

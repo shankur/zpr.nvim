@@ -119,12 +119,21 @@ local function open_layout(before_lines, after_lines, file_path)
     review.right_win = vim.api.nvim_get_current_win()
   end
 
-  -- Enable Neovim's built-in diff on both windows
+  -- Ensure filler lines are on so added/deleted blocks are padded to align
+  vim.opt.diffopt:append("filler")
+
+  -- Enable Neovim's built-in diff on both windows, then force scrollbind
+  -- so the padded filler lines actually stay in sync as you scroll.
   for _, win in ipairs({ review.left_win, review.right_win }) do
     vim.api.nvim_win_call(win, function()
       vim.cmd("diffthis")
+      vim.wo.scrollbind = true
+      vim.wo.cursorbind = true
     end)
   end
+
+  -- Snap both windows to the same scroll position
+  vim.api.nvim_win_call(review.left_win, function() vim.cmd("syncbind") end)
 
   update_statuslines()
 end

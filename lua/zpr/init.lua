@@ -72,22 +72,39 @@ function M.setup()
     vim.keymap.set("n", "[f", function() diff().prev_file({}) end, vim.tbl_extend("force", opts, { desc = "zpr: prev file" }))
     vim.keymap.set("n", "q",  function() diff().close()       end, vim.tbl_extend("force", opts, { desc = "zpr: close review" }))
 
-    -- <leader>c: add or edit inline comment on current line (right/after buffer only)
-    vim.keymap.set("n", "<leader>c", function()
+    -- Helper: check we're in the after pane, then add/edit a comment
+    local function comment_on_range(line_start, line_end)
       local buf_name = vim.api.nvim_buf_get_name(buf)
       if not buf_name:match("zpr://after$") then
         vim.notify("[zpr] move to the AFTER (right) pane to add a comment", vim.log.levels.WARN)
         return
       end
-      local r    = diff().review
-      local line = vim.api.nvim_win_get_cursor(0)[1]
-      if comments().find_at(r.file_path, line) then
-        comments().edit_at(r.file_path, line)
+      local r = diff().review
+      -- line_end is nil for single-line; only set when it differs from start
+      local end_line = (line_end and line_end > line_start) and line_end or nil
+      if comments().find_at(r.file_path, line_start) then
+        comments().edit_at(r.file_path, line_start)
       else
         local hunk = r.hunks and r.hunks[r.hunk_index]
-        comments().add(r.file_path, line, r.hunk_index, hunk)
+        comments().add(r.file_path, line_start, end_line, r.hunk_index, hunk)
       end
+    end
+
+    -- <leader>c (normal): add/edit comment on current line
+    vim.keymap.set("n", "<leader>c", function()
+      local line = vim.api.nvim_win_get_cursor(0)[1]
+      comment_on_range(line, nil)
     end, vim.tbl_extend("force", opts, { desc = "zpr: add/edit comment" }))
+
+    -- <leader>c (visual): add comment on selected line range
+    vim.keymap.set("v", "<leader>c", function()
+      -- Exit visual mode first so '< and '> marks are set
+      local esc = vim.api.nvim_replace_termcodes("<Esc>", true, false, true)
+      vim.api.nvim_feedkeys(esc, "x", false)
+      local line_start = vim.fn.line("'<")
+      local line_end   = vim.fn.line("'>")
+      comment_on_range(line_start, line_end)
+    end, vim.tbl_extend("force", opts, { desc = "zpr: add/edit range comment" }))
 
     -- <leader>d: delete inline comment on current line (with confirmation)
     vim.keymap.set("n", "<leader>d", function()

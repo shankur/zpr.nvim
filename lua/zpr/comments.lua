@@ -1,6 +1,7 @@
 -- comments.lua: inline comment management
 -- Comments render as virt_lines below the commented line in the after buffer,
 -- with matching blank virt_lines in the before buffer to preserve alignment.
+-- Range comments (visual selection) anchor below the last line of the range.
 
 local M = {}
 
@@ -44,24 +45,34 @@ local function save()
   local out = {}
   for _, c in ipairs(comments()) do
     table.insert(out, {
-      file       = c.file,
-      new_line   = c.new_line,
-      old_line   = c.old_line,
-      body       = c.body,
-      hunk_index = c.hunk_index,
+      file         = c.file,
+      new_line     = c.new_line,
+      new_line_end = c.new_line_end,
+      old_line     = c.old_line,
+      body         = c.body,
+      hunk_index   = c.hunk_index,
     })
   end
   local f = io.open(path, "w")
   if f then f:write(vim.json.encode(out)); f:close() end
 end
 
--- Render the comment virt_line below `line_0` (0-based) in the after buffer
-local function render_comment(buf, line_0, body)
+-- Build the prefix shown before the comment body.
+-- Single-line: "  💬 "   Range: "  💬 [5–8] "
+local function comment_prefix(new_line, new_line_end)
+  if new_line_end and new_line_end > new_line then
+    return ("  💬 [%d–%d] "):format(new_line, new_line_end)
+  end
+  return "  💬 "
+end
+
+-- Render the comment virt_line below `line_0` (0-based) in the after buffer.
+local function render_comment(buf, line_0, body, new_line, new_line_end)
   return vim.api.nvim_buf_set_extmark(buf, ns_comment, line_0, 0, {
     virt_lines = {
       {
-        { "  ▎ ", "ZprCommentBar" },
-        { body,   "ZprComment" },
+        { comment_prefix(new_line, new_line_end), "ZprCommentBar" },
+        { body, "ZprComment" },
       },
     },
   })
@@ -85,8 +96,18 @@ local function map_to_old_line(new_line, hunk)
   return math.max(1, hunk.old_start + offset)
 end
 
+-- Place the comment extmark and filler, returning their IDs.
+local function place(after_buf, before_buf, new_line, new_line_end, old_line, body)
+  -- Anchor below the last line of the range (0-based)
+  local anchor = (new_line_end or new_line) - 1
+  local comment_id = render_comment(after_buf, anchor, body, new_line, new_line_end)
+  local before_lines = vim.api.nvim_buf_line_count(before_buf)
+  local filler_line  = math.min(old_line - 1, math.max(0, before_lines - 1))
+  local filler_id    = before_lines > 0 and render_filler(before_buf, filler_line) or nil
+  return comment_id, filler_id
+end
+
 -- Re-render all stored comments for the current file.
--- Reads buffers from _G.zpr_state directly so it's always fresh.
 function M.render_all(file_path)
   local after_buf  = _G.zpr_state and _G.zpr_state.right_buf
   local before_buf = _G.zpr_state and _G.zpr_state.left_buf
@@ -96,48 +117,47 @@ function M.render_all(file_path)
   vim.api.nvim_buf_clear_namespace(before_buf, ns_filler,  0, -1)
   for _, c in ipairs(comments()) do
     if c.file == file_path then
-      c.comment_id = render_comment(after_buf, c.new_line - 1, c.body)
-      local before_lines = vim.api.nvim_buf_line_count(before_buf)
-      local filler_line  = math.min(c.old_line - 1, math.max(0, before_lines - 1))
-      c.filler_id  = before_lines > 0 and render_filler(before_buf, filler_line) or nil
+      c.comment_id, c.filler_id = place(
+        after_buf, before_buf, c.new_line, c.new_line_end, c.old_line, c.body)
       c.after_buf  = after_buf
       c.before_buf = before_buf
     end
   end
 end
 
--- Add a comment interactively on new_line (1-based) of the after buffer.
--- hunk: { old_start, new_start } used to find the mirror line in before.
-function M.add(file_path, new_line, hunk_index, hunk)
-  local prompt = ("Comment [%s:%d]: "):format(
-    vim.fn.fnamemodify(file_path, ":t"), new_line)
+-- Add a comment interactively on new_line..new_line_end (1-based) of the after buffer.
+-- new_line_end may be nil for single-line comments.
+function M.add(file_path, new_line, new_line_end, hunk_index, hunk)
+  local fname = vim.fn.fnamemodify(file_path, ":t")
+  local range  = (new_line_end and new_line_end > new_line)
+    and ("%d–%d"):format(new_line, new_line_end) or tostring(new_line)
+  local prompt = ("Comment [%s:%s]: "):format(fname, range)
 
   vim.ui.input({ prompt = prompt, default = "" }, function(text)
     if not text or vim.trim(text) == "" then return end
     vim.schedule(function()
-      -- Look up buffers fresh inside vim.schedule — avoids stale handles
-      -- that were nil at keymap-trigger time but valid by render time.
       local after_buf  = _G.zpr_state and _G.zpr_state.right_buf
       local before_buf = _G.zpr_state and _G.zpr_state.left_buf
       if not after_buf  or not vim.api.nvim_buf_is_valid(after_buf)  then return end
       if not before_buf or not vim.api.nvim_buf_is_valid(before_buf) then return end
 
-      local old_line   = map_to_old_line(new_line, hunk)
-      local comment_id = render_comment(after_buf, new_line - 1, text)
-      local before_lines = vim.api.nvim_buf_line_count(before_buf)
-      local filler_line  = math.min(old_line - 1, math.max(0, before_lines - 1))
-      local filler_id  = before_lines > 0 and render_filler(before_buf, filler_line) or nil
+      -- Anchor old_line to the end of the range
+      local anchor_line = new_line_end or new_line
+      local old_line    = map_to_old_line(anchor_line, hunk)
+      local comment_id, filler_id = place(
+        after_buf, before_buf, new_line, new_line_end, old_line, text)
 
       table.insert(comments(), {
-        file       = file_path,
-        new_line   = new_line,
-        old_line   = old_line,
-        body       = text,
-        hunk_index = hunk_index,
-        comment_id = comment_id,
-        filler_id  = filler_id,
-        after_buf  = after_buf,
-        before_buf = before_buf,
+        file         = file_path,
+        new_line     = new_line,
+        new_line_end = new_line_end,
+        old_line     = old_line,
+        body         = text,
+        hunk_index   = hunk_index,
+        comment_id   = comment_id,
+        filler_id    = filler_id,
+        after_buf    = after_buf,
+        before_buf   = before_buf,
       })
 
       save()
@@ -145,46 +165,52 @@ function M.add(file_path, new_line, hunk_index, hunk)
   end)
 end
 
--- Return the comment on new_line (1-based) for the given file, or nil.
-function M.find_at(file_path, new_line)
+-- Return the comment whose range contains `line` (1-based), or nil.
+function M.find_at(file_path, line)
   for _, c in ipairs(comments()) do
-    if c.file == file_path and c.new_line == new_line then return c end
+    if c.file == file_path then
+      local last = c.new_line_end or c.new_line
+      if line >= c.new_line and line <= last then return c end
+    end
   end
 end
 
--- Edit the comment on new_line interactively (pre-filled with existing body).
+-- Edit the comment that covers `new_line` interactively.
 function M.edit_at(file_path, new_line)
   local c = M.find_at(file_path, new_line)
   if not c then return end
 
-  local prompt = ("Edit comment [%s:%d]: "):format(
-    vim.fn.fnamemodify(file_path, ":t"), new_line)
+  local fname  = vim.fn.fnamemodify(file_path, ":t")
+  local last   = c.new_line_end or c.new_line
+  local range  = last > c.new_line
+    and ("%d–%d"):format(c.new_line, last) or tostring(c.new_line)
+  local prompt = ("Edit comment [%s:%s]: "):format(fname, range)
 
   vim.ui.input({ prompt = prompt, default = c.body }, function(text)
-    if not text then return end          -- cancelled
-    if vim.trim(text) == "" then        -- blanked out → delete
-      M.delete_at(c.after_buf, file_path, new_line)
+    if not text then return end
+    if vim.trim(text) == "" then
+      M.delete_at(c.after_buf, file_path, c.new_line)
       return
     end
     vim.schedule(function()
       c.body = text
-      -- Re-render just this comment's extmark
       if c.after_buf and vim.api.nvim_buf_is_valid(c.after_buf) and c.comment_id then
         pcall(vim.api.nvim_buf_del_extmark, c.after_buf, ns_comment, c.comment_id)
       end
-      c.comment_id = render_comment(c.after_buf, new_line - 1, text)
+      c.comment_id = render_comment(
+        c.after_buf, (last) - 1, text, c.new_line, c.new_line_end)
       save()
     end)
   end)
 end
 
--- Delete the comment on new_line (1-based) in the after buffer
+-- Delete the comment starting at new_line (1-based).
 function M.delete_at(after_buf, file_path, new_line)
   local remaining = {}
   local deleted = false
   for _, c in ipairs(comments()) do
     if not deleted and c.file == file_path and c.new_line == new_line then
-      pcall(vim.api.nvim_buf_del_extmark, after_buf,  ns_comment, c.comment_id)
+      pcall(vim.api.nvim_buf_del_extmark, after_buf, ns_comment, c.comment_id)
       pcall(vim.api.nvim_buf_del_extmark, c.before_buf or after_buf, ns_filler, c.filler_id)
       deleted = true
     else
@@ -200,10 +226,11 @@ function M.get_all()
   local out = {}
   for _, c in ipairs(comments()) do
     table.insert(out, {
-      file       = c.file,
-      line       = c.new_line,
-      body       = c.body,
-      hunk_index = c.hunk_index,
+      file         = c.file,
+      line         = c.new_line,
+      line_end     = c.new_line_end,
+      body         = c.body,
+      hunk_index   = c.hunk_index,
     })
   end
   return out

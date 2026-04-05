@@ -23,6 +23,11 @@ function M.setup()
   M.handlers["prev_file"]      = function(p) return diff().prev_file(p) end
   M.handlers["get_comments"]   = function(_) return comments().get_all() end
   M.handlers["clear_comments"] = function(_) comments().clear(); return {} end
+  M.handlers["add_comment"]    = function(p)
+    local ok = comments().add_direct(
+      p.file_path, p.line, p.line_end, p.hunk_index or 1, p.body)
+    return { ok = ok }
+  end
   M.handlers["status"]         = function(_)
     local r = diff().review
     return {

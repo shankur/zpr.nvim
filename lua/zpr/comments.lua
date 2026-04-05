@@ -194,6 +194,44 @@ function M.add(file_path, new_line, new_line_end, hunk_index, hunk)
   end)
 end
 
+-- Add a comment directly (non-interactive, for RPC / Claude).
+-- Renders immediately if the file is currently open in the diff view.
+function M.add_direct(file_path, new_line, new_line_end, hunk_index, body)
+  if not body or vim.trim(body) == "" then return false end
+  local after_buf  = _G.zpr_state and _G.zpr_state.right_buf
+  local before_buf = _G.zpr_state and _G.zpr_state.left_buf
+  local r          = _G.zpr_state
+
+  local anchor_line = new_line_end or new_line
+  local hunk        = r and r.hunks and r.hunks[hunk_index]
+  local old_line    = map_to_old_line(anchor_line, hunk)
+
+  local comment_id, filler_id, line_ids
+  if after_buf  and vim.api.nvim_buf_is_valid(after_buf)
+  and before_buf and vim.api.nvim_buf_is_valid(before_buf)
+  and (r and r.file_path == file_path) then
+    comment_id, filler_id, line_ids = place(
+      after_buf, before_buf, new_line, new_line_end, old_line, body)
+  end
+
+  table.insert(comments(), {
+    file         = file_path,
+    new_line     = new_line,
+    new_line_end = new_line_end,
+    old_line     = old_line,
+    body         = body,
+    hunk_index   = hunk_index,
+    comment_id   = comment_id,
+    filler_id    = filler_id,
+    line_ids     = line_ids or {},
+    after_buf    = after_buf,
+    before_buf   = before_buf,
+  })
+
+  save()
+  return true
+end
+
 -- Return the comment whose range contains `line` (1-based), or nil.
 function M.find_at(file_path, line)
   for _, c in ipairs(comments()) do

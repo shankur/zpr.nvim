@@ -12,6 +12,25 @@ A Neovim plugin for reviewing git commits and pull requests inline, with support
   - Comments persisted per-repo per-ref in `~/.zpr/reviews/`
 - RPC server so Claude (or any script) can drive the review from the terminal
 
+## Claude AI integration
+
+zpr ships a `/zpr-review` Claude Code skill that drives a full AI-assisted review:
+Claude reads the diff, prioritizes hunks by risk and complexity, opens them in
+order, and adds inline comments — all without leaving Neovim.
+
+To activate the skill, symlink it into your Claude knowledge base:
+
+```sh
+ln -s ~/Repository/zpr/skills/zpr-review ~/.claude-kb/skills/zpr-review
+# or wherever your claude-kb skills directory lives
+```
+
+Then in any Claude Code session:
+```
+/zpr-review abc1234        # review a commit
+/zpr-review 42             # review PR #42
+```
+
 ## Requirements
 
 - Neovim 0.9+

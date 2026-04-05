@@ -18,11 +18,10 @@ zpr ships a `/zpr-review` Claude Code skill that drives a full AI-assisted revie
 Claude reads the diff, prioritizes hunks by risk and complexity, opens them in
 order, and adds inline comments — all without leaving Neovim.
 
-To activate the skill, symlink it into your Claude knowledge base:
+To activate the skill, symlink it into your Claude skills directory:
 
 ```sh
-ln -s ~/Repository/zpr/skills/zpr-review ~/.claude-kb/skills/zpr-review
-# or wherever your claude-kb skills directory lives
+ln -s ~/Repository/zpr/skills/zpr-review ~/.claude/skills/zpr-review
 ```
 
 Then in any Claude Code session:

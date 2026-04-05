@@ -89,13 +89,19 @@ function M.setup()
       end
     end, vim.tbl_extend("force", opts, { desc = "zpr: add/edit comment" }))
 
-    -- <leader>d: delete inline comment on current line
+    -- <leader>d: delete inline comment on current line (with confirmation)
     vim.keymap.set("n", "<leader>d", function()
       local buf_name = vim.api.nvim_buf_get_name(buf)
       if not buf_name:match("zpr://after$") then return end
-      local r = diff().review
+      local r    = diff().review
       local line = vim.api.nvim_win_get_cursor(0)[1]
-      comments().delete_at(r.right_buf, r.file_path, line)
+      local c    = comments().find_at(r.file_path, line)
+      if not c then return end
+      vim.ui.input({ prompt = ('Delete comment "%s"? [y/N]: '):format(c.body) }, function(ans)
+        if ans and ans:lower() == "y" then
+          comments().delete_at(r.right_buf, r.file_path, line)
+        end
+      end)
     end, vim.tbl_extend("force", opts, { desc = "zpr: delete comment" }))
   end
 

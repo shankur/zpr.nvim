@@ -104,12 +104,14 @@ local function render_comment_lines(buf, new_line, new_line_end)
   local ids  = {}
   for lnum = new_line, last do
     local sign
-    if lnum == new_line and new_line == last then
-      sign = "│"   -- single line: bracket continues into virt_line └─
+    if new_line == last then
+      sign = "│"   -- single line
     elseif lnum == new_line then
       sign = "╭"   -- range start
+    elseif lnum == last then
+      sign = "╰"   -- range end
     else
-      sign = "│"   -- range middle and last: └─ in virt_line closes it
+      sign = "│"   -- range middle
     end
     local id = vim.api.nvim_buf_set_extmark(buf, ns_lines, lnum - 1, 0, {
       sign_text     = sign,

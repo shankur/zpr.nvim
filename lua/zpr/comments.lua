@@ -52,10 +52,12 @@ local function save()
       old_line     = c.old_line,
       body         = c.body,
       hunk_index   = c.hunk_index,
-      locked       = c.locked    or nil,
-      gh_id        = c.gh_id     or nil,
-      gh_author    = c.gh_author or nil,
-      gh_pr        = c.gh_pr     or nil,
+      locked        = c.locked        or nil,
+      gh_id         = c.gh_id         or nil,
+      gh_author     = c.gh_author     or nil,
+      gh_pr         = c.gh_pr         or nil,
+      gh_thread_id  = c.gh_thread_id  or nil,
+      resolved      = c.resolved      or nil,
     })
   end
   local f = io.open(path, "w")
@@ -91,10 +93,11 @@ local function wrap_body(text, width)
 end
 
 -- Build the prefix shown before the comment body.
--- Normal:   "  │ :5 "          Range: "  │ [5–8] "
--- Locked:   "  ⊘ @alice :5 "   Range: "  ⊘ @alice [5–8] "
-local function comment_prefix(new_line, new_line_end, locked, gh_author)
-  local icon   = locked and "⊘" or "│"
+-- Normal:    "  │ :5 "            Range: "  │ [5–8] "
+-- Locked:    "  ⊘ @alice :5 "     Range: "  ⊘ @alice [5–8] "
+-- Resolved:  "  ✓ @alice :5 "     Range: "  ✓ @alice [5–8] "
+local function comment_prefix(new_line, new_line_end, locked, gh_author, resolved)
+  local icon   = resolved and "✓" or (locked and "⊘" or "│")
   local author = (locked and gh_author and gh_author ~= "") and (" @" .. gh_author) or ""
   if new_line_end and new_line_end > new_line then
     return ("  %s%s [%d–%d] "):format(icon, author, new_line, new_line_end)
@@ -105,10 +108,12 @@ end
 -- Render the comment virt_line below `line_0` (0-based) in the after buffer.
 -- Long bodies are word-wrapped; set vim.g.zpr_comment_wrap to change the width
 -- (default 80). Set to 0 to disable wrapping.
-local function render_comment(buf, line_0, body, new_line, new_line_end, locked, gh_author)
-  local bar_hl  = locked and "ZprCommentBarLocked" or "ZprCommentBar"
-  local body_hl = locked and "ZprCommentLocked"    or "ZprComment"
-  local prefix   = comment_prefix(new_line, new_line_end, locked, gh_author)
+local function render_comment(buf, line_0, body, new_line, new_line_end, locked, gh_author, resolved)
+  local bar_hl  = resolved and "ZprCommentBarResolved"
+                  or (locked and "ZprCommentBarLocked" or "ZprCommentBar")
+  local body_hl = resolved and "ZprCommentResolved"
+                  or (locked and "ZprCommentLocked"    or "ZprComment")
+  local prefix   = comment_prefix(new_line, new_line_end, locked, gh_author, resolved)
   local prefix_w = vim.fn.strdisplaywidth(prefix)
   local wrap     = vim.g.zpr_comment_wrap or 80
   local chunks   = wrap_body(body, wrap > 0 and math.max(20, wrap - prefix_w) or 0)
@@ -176,11 +181,11 @@ local function render_comment_lines(buf, new_line, new_line_end, locked)
 end
 
 -- Place the comment extmark and filler, returning their IDs.
-local function place(after_buf, before_buf, new_line, new_line_end, old_line, body, locked, gh_author)
+local function place(after_buf, before_buf, new_line, new_line_end, old_line, body, locked, gh_author, resolved)
   -- Clamp anchor to buffer bounds (important for approximate locked lines)
   local after_lines = vim.api.nvim_buf_line_count(after_buf)
   local anchor = math.min((new_line_end or new_line) - 1, math.max(0, after_lines - 1))
-  local comment_id = render_comment(after_buf, anchor, body, new_line, new_line_end, locked, gh_author)
+  local comment_id = render_comment(after_buf, anchor, body, new_line, new_line_end, locked, gh_author, resolved)
   local before_lines = vim.api.nvim_buf_line_count(before_buf)
   local filler_line  = math.min(old_line - 1, math.max(0, before_lines - 1))
   local filler_id    = before_lines > 0 and render_filler(before_buf, filler_line) or nil
@@ -199,7 +204,7 @@ function M.render_all(file_path)
   for _, c in ipairs(comments()) do
     if c.file == file_path then
       c.comment_id, c.filler_id, c.line_ids = place(
-        after_buf, before_buf, c.new_line, c.new_line_end, c.old_line, c.body, c.locked, c.gh_author)
+        after_buf, before_buf, c.new_line, c.new_line_end, c.old_line, c.body, c.locked, c.gh_author, c.resolved)
       c.after_buf  = after_buf
       c.before_buf = before_buf
     end
@@ -265,7 +270,7 @@ function M.add_direct(file_path, new_line, new_line_end, hunk_index, body, locke
   and before_buf and vim.api.nvim_buf_is_valid(before_buf)
   and (r and r.file_path == file_path) then
     comment_id, filler_id, line_ids = place(
-      after_buf, before_buf, new_line, new_line_end, old_line, body, locked, nil)
+      after_buf, before_buf, new_line, new_line_end, old_line, body, locked, nil, nil)
   end
 
   table.insert(comments(), {
@@ -356,7 +361,7 @@ function M.edit_at(file_path, new_line)
       if c.after_buf and vim.api.nvim_buf_is_valid(c.after_buf) then
         pcall(vim.api.nvim_buf_del_extmark, c.after_buf, ns_comment, c.comment_id)
       end
-      c.comment_id = render_comment(c.after_buf, last - 1, text, c.new_line, c.new_line_end, c.locked, c.gh_author)
+      c.comment_id = render_comment(c.after_buf, last - 1, text, c.new_line, c.new_line_end, c.locked, c.gh_author, c.resolved)
       save()
     end)
   end)
@@ -385,6 +390,43 @@ function M.delete_at(after_buf, file_path, new_line)
   end
   _G.zpr_state.comments = remaining
   save()
+end
+
+-- Toggle the resolved state of a locked comment via the GitHub GraphQL API.
+-- Re-renders the comment immediately on success.
+function M.resolve_at(file_path, new_line)
+  local c = M.find_at(file_path, new_line)
+  if not c then return end
+  if not c.locked then
+    vim.notify("[zpr] only imported GitHub comments can be resolved", vim.log.levels.WARN)
+    return
+  end
+  if not c.gh_thread_id then
+    vim.notify("[zpr] no thread ID — re-import with zpr-pull-review to enable resolving", vim.log.levels.WARN)
+    return
+  end
+
+  local action   = c.resolved and "unresolveReviewThread" or "resolveReviewThread"
+  local mutation = ('mutation { %s(input: {threadId: "%s"}) { thread { isResolved } } }')
+                   :format(action, c.gh_thread_id)
+
+  vim.fn.jobstart({ "gh", "api", "graphql", "-f", "query=" .. mutation }, {
+    stdout_buffered = true,
+    on_stdout = function(_, data)
+      local raw = table.concat(data, "")
+      local ok, result = pcall(vim.json.decode, raw)
+      if ok and result.data then
+        c.resolved = not c.resolved
+        save()
+        local r = _G.zpr_state
+        if r and r.file_path == file_path then M.render_all(file_path) end
+        vim.notify("[zpr] conversation " .. (c.resolved and "resolved" or "unresolved"),
+                   vim.log.levels.INFO)
+      else
+        vim.notify("[zpr] GitHub API error — check gh auth", vim.log.levels.ERROR)
+      end
+    end,
+  })
 end
 
 -- Return all comments as a plain table (for RPC / Claude)

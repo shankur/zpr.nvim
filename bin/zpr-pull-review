@@ -60,6 +60,56 @@ def fetch_pr_comments(repo_name, pr_number):
     return json.loads(r.stdout)
 
 
+def fetch_thread_map(repo_name, pr_number):
+    """
+    Returns a dict mapping REST comment database ID → {thread_id, resolved}.
+    Uses GraphQL because the REST API does not expose thread IDs or resolved
+    state. Fetches up to 100 threads; PRs with more threads will miss the tail.
+    """
+    owner, repo = repo_name.split("/", 1)
+    query = """
+query($owner: String!, $repo: String!, $pr: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $pr) {
+      reviewThreads(first: 100) {
+        nodes {
+          id
+          isResolved
+          comments(first: 1) {
+            nodes { databaseId }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+    try:
+        r = run(["gh", "api", "graphql",
+                 "-f", f"query={query}",
+                 "-F", f"owner={owner}",
+                 "-F", f"repo={repo}",
+                 "-F", f"pr={pr_number}"])
+        data = json.loads(r.stdout)
+        threads = (data.get("data", {})
+                       .get("repository", {})
+                       .get("pullRequest", {})
+                       .get("reviewThreads", {})
+                       .get("nodes", []))
+        result = {}
+        for t in threads:
+            nodes = t.get("comments", {}).get("nodes", [])
+            if nodes:
+                db_id = nodes[0]["databaseId"]
+                result[db_id] = {
+                    "thread_id": t["id"],
+                    "resolved":  t["isResolved"],
+                }
+        return result
+    except RuntimeError:
+        return {}  # GraphQL unavailable — carry on without thread info
+
+
 def position_to_new_line(diff_hunk, position):
     """
     Map a diff position (1-based; the @@ header line is position 1) to the
@@ -86,17 +136,13 @@ def position_to_new_line(diff_hunk, position):
     return None
 
 
-def gh_to_zpr(gh_comment, pr_number):
+def gh_to_zpr(gh_comment, pr_number, thread_map):
     """
     Convert a GitHub PR review comment to a zpr comment record.
 
-    RIGHT-side comments with a `line` field are imported as locked (all
-    imported comments are locked since they belong to GitHub).  LEFT-side
-    and position-only (legacy) comments are also imported as locked with
-    approximated new-file line numbers.
-
-    All records carry gh_id / gh_author / gh_pr so the plugin can display
-    the author and post threaded replies via the GitHub API.
+    All imported comments are locked. gh_thread_id and resolved are populated
+    from the GraphQL thread map when available (may be absent for older imports
+    or if GraphQL is unavailable).
 
     Returns None only if no usable line information can be derived at all.
     """
@@ -110,12 +156,15 @@ def gh_to_zpr(gh_comment, pr_number):
     gh_id      = gh_comment["id"]
     gh_author  = gh_comment.get("user", {}).get("login", "")
 
+    thread = thread_map.get(gh_id, {})
     base = {
-        "hunk_index": 1,
-        "locked":     True,
-        "gh_id":      gh_id,
-        "gh_author":  gh_author,
-        "gh_pr":      pr_number,
+        "hunk_index":   1,
+        "locked":       True,
+        "gh_id":        gh_id,
+        "gh_author":    gh_author,
+        "gh_pr":        pr_number,
+        "gh_thread_id": thread.get("thread_id") or None,
+        "resolved":     thread.get("resolved") or False,
     }
 
     if side == "RIGHT" and line is not None:
@@ -213,11 +262,16 @@ def main():
 
     print(f"Fetched {len(gh_comments)} comment(s) from GitHub")
 
+    # Fetch thread metadata (resolved state + thread IDs) via GraphQL
+    thread_map = fetch_thread_map(repo_name, args.pr_number)
+    if thread_map:
+        print(f"Fetched {len(thread_map)} thread(s) from GraphQL")
+
     # Convert to zpr format
     imported = []
     skipped  = 0
     for ghc in gh_comments:
-        zc = gh_to_zpr(ghc, args.pr_number)
+        zc = gh_to_zpr(ghc, args.pr_number, thread_map)
         if zc:
             imported.append(zc)
         else:

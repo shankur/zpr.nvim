@@ -94,8 +94,9 @@ Keymaps are buffer-local and only active inside zpr diff buffers.
 | `]f` | n | Next file in commit |
 | `[f` | n | Previous file in commit |
 | `q` | n | Close review |
-| `<leader>zc` | n | Add / edit comment on current line |
+| `<leader>zc` | n | Add / edit comment on current line (reply if GitHub comment) |
 | `<leader>zc` | v | Add / edit comment on selected line range |
+| `<leader>zr` | n | Resolve / unresolve GitHub comment thread |
 | `<leader>zd` | n | Delete comment (with confirmation) |
 | `<leader>zt` | n | Toggle sidebar |
 
@@ -143,7 +144,9 @@ All comment types are imported as **locked** (they belong to GitHub, not your lo
 | LEFT-side | Locked, line approximated from diff hunk |
 | Position-only (legacy) | Locked, line approximated from diff hunk |
 
-Locked comments render with a `⊘` sign and muted gray color. The author's GitHub login (`@username`) is shown in the prefix. Pressing `<leader>zc` on a locked comment opens a reply prompt that posts a **threaded reply** directly to GitHub via `gh api` — no need to push a review separately. Locked comments cannot be edited locally but can be deleted.
+Locked comments render with a `⊘` sign and muted gray color. The author's GitHub login (`@username`) is shown in the prefix. Pressing `<leader>zc` on a locked comment opens a reply prompt that posts a **threaded reply** directly to GitHub via `gh api` — no need to push a review separately. Locked comments cannot be edited or deleted locally.
+
+Pressing `<leader>zr` on a locked comment **resolves or unresolves** the GitHub conversation thread via the GraphQL API. Resolved comments render with a `✓` sign and dim green color. The resolved state is persisted locally and restored on reload.
 
 Only comments with truly no usable line information (malformed diff hunk + no line field) are skipped.
 

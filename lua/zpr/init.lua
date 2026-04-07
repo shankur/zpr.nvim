@@ -164,6 +164,15 @@ function M.setup()
       comment_on_range(line_start, line_end)
     end, vim.tbl_extend("force", opts, { desc = "zpr: add/edit range comment" }))
 
+    -- <leader>zr: resolve / unresolve an imported GitHub comment thread
+    vim.keymap.set("n", "<leader>zr", function()
+      local buf_name = vim.api.nvim_buf_get_name(buf)
+      if not buf_name:match("zpr://after$") then return end
+      local r    = diff().review
+      local line = vim.api.nvim_win_get_cursor(0)[1]
+      comments().resolve_at(r.file_path, line)
+    end, vim.tbl_extend("force", opts, { desc = "zpr: resolve/unresolve GitHub comment thread" }))
+
     -- <leader>zd: delete inline comment on current line (with confirmation)
     vim.keymap.set("n", "<leader>zd", function()
       local buf_name = vim.api.nvim_buf_get_name(buf)

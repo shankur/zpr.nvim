@@ -126,9 +126,15 @@ zpr-pull-review 42 --repo-path /path/to/repo
 
 Comments are deduplicated by file + line + body. After writing the file, the script calls `zpr-call reload_comments` to update any running Neovim session automatically.
 
-All comment types are imported:
-- **RIGHT-side comments** with a `line` field are imported as normal, fully editable comments.
-- **LEFT-side comments** and **legacy position-only comments** are imported as **locked** — they appear in the diff view with a `⊘` marker and muted gray color instead of the normal amber, and their line numbers are approximated by parsing the diff hunk. Locked comments cannot be edited but can be deleted.
+All comment types are imported as **locked** (they belong to GitHub, not your local session):
+
+| Type | Imported as |
+|---|---|
+| RIGHT-side with `line` field | Locked, precise line number |
+| LEFT-side | Locked, line approximated from diff hunk |
+| Position-only (legacy) | Locked, line approximated from diff hunk |
+
+Locked comments render with a `⊘` sign and muted gray color. The author's GitHub login (`@username`) is shown in the prefix. Pressing `<leader>zc` on a locked comment opens a reply prompt that posts a **threaded reply** directly to GitHub via `gh api` — no need to push a review separately. Locked comments cannot be edited locally but can be deleted.
 
 Only comments with truly no usable line information (malformed diff hunk + no line field) are skipped.
 

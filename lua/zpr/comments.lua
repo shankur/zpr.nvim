@@ -52,7 +52,10 @@ local function save()
       old_line     = c.old_line,
       body         = c.body,
       hunk_index   = c.hunk_index,
-      locked       = c.locked or nil,
+      locked       = c.locked    or nil,
+      gh_id        = c.gh_id     or nil,
+      gh_author    = c.gh_author or nil,
+      gh_pr        = c.gh_pr     or nil,
     })
   end
   local f = io.open(path, "w")
@@ -62,23 +65,25 @@ local function save()
 end
 
 -- Build the prefix shown before the comment body.
--- Normal:  "  │ :5 "   Range: "  │ [5–8] "   Locked: "  ⊘ :5 "
-local function comment_prefix(new_line, new_line_end, locked)
-  local icon = locked and "⊘" or "│"
+-- Normal:   "  │ :5 "          Range: "  │ [5–8] "
+-- Locked:   "  ⊘ @alice :5 "   Range: "  ⊘ @alice [5–8] "
+local function comment_prefix(new_line, new_line_end, locked, gh_author)
+  local icon   = locked and "⊘" or "│"
+  local author = (locked and gh_author and gh_author ~= "") and (" @" .. gh_author) or ""
   if new_line_end and new_line_end > new_line then
-    return ("  %s [%d–%d] "):format(icon, new_line, new_line_end)
+    return ("  %s%s [%d–%d] "):format(icon, author, new_line, new_line_end)
   end
-  return ("  %s :%d "):format(icon, new_line)
+  return ("  %s%s :%d "):format(icon, author, new_line)
 end
 
 -- Render the comment virt_line below `line_0` (0-based) in the after buffer.
-local function render_comment(buf, line_0, body, new_line, new_line_end, locked)
+local function render_comment(buf, line_0, body, new_line, new_line_end, locked, gh_author)
   local bar_hl  = locked and "ZprCommentBarLocked" or "ZprCommentBar"
   local body_hl = locked and "ZprCommentLocked"    or "ZprComment"
   return vim.api.nvim_buf_set_extmark(buf, ns_comment, line_0, 0, {
     virt_lines = {
       {
-        { comment_prefix(new_line, new_line_end, locked), bar_hl },
+        { comment_prefix(new_line, new_line_end, locked, gh_author), bar_hl },
         { body, body_hl },
       },
     },
@@ -134,11 +139,11 @@ local function render_comment_lines(buf, new_line, new_line_end, locked)
 end
 
 -- Place the comment extmark and filler, returning their IDs.
-local function place(after_buf, before_buf, new_line, new_line_end, old_line, body, locked)
+local function place(after_buf, before_buf, new_line, new_line_end, old_line, body, locked, gh_author)
   -- Clamp anchor to buffer bounds (important for approximate locked lines)
   local after_lines = vim.api.nvim_buf_line_count(after_buf)
   local anchor = math.min((new_line_end or new_line) - 1, math.max(0, after_lines - 1))
-  local comment_id = render_comment(after_buf, anchor, body, new_line, new_line_end, locked)
+  local comment_id = render_comment(after_buf, anchor, body, new_line, new_line_end, locked, gh_author)
   local before_lines = vim.api.nvim_buf_line_count(before_buf)
   local filler_line  = math.min(old_line - 1, math.max(0, before_lines - 1))
   local filler_id    = before_lines > 0 and render_filler(before_buf, filler_line) or nil
@@ -157,7 +162,7 @@ function M.render_all(file_path)
   for _, c in ipairs(comments()) do
     if c.file == file_path then
       c.comment_id, c.filler_id, c.line_ids = place(
-        after_buf, before_buf, c.new_line, c.new_line_end, c.old_line, c.body, c.locked)
+        after_buf, before_buf, c.new_line, c.new_line_end, c.old_line, c.body, c.locked, c.gh_author)
       c.after_buf  = after_buf
       c.before_buf = before_buf
     end
@@ -223,7 +228,7 @@ function M.add_direct(file_path, new_line, new_line_end, hunk_index, body, locke
   and before_buf and vim.api.nvim_buf_is_valid(before_buf)
   and (r and r.file_path == file_path) then
     comment_id, filler_id, line_ids = place(
-      after_buf, before_buf, new_line, new_line_end, old_line, body, locked)
+      after_buf, before_buf, new_line, new_line_end, old_line, body, locked, nil)
   end
 
   table.insert(comments(), {
@@ -255,12 +260,45 @@ function M.find_at(file_path, line)
   end
 end
 
+-- Post a threaded reply to a locked (GitHub-imported) comment.
+local function reply_to(c)
+  if not c.gh_id or not c.gh_pr then
+    vim.notify(
+      "[zpr] cannot reply: comment has no GitHub ID (imported with an older zpr-pull-review?)",
+      vim.log.levels.WARN)
+    return
+  end
+  local who    = (c.gh_author and c.gh_author ~= "") and ("@" .. c.gh_author) or "comment"
+  local prompt = ("Reply to %s: "):format(who)
+  vim.ui.input({ prompt = prompt }, function(text)
+    if not text or vim.trim(text) == "" then return end
+    vim.schedule(function()
+      local repo = vim.trim(vim.fn.system("gh repo view --json nameWithOwner -q .nameWithOwner"))
+      if repo == "" then
+        vim.notify("[zpr] could not determine GitHub repo", vim.log.levels.ERROR)
+        return
+      end
+      local endpoint = ("repos/%s/pulls/%d/comments/%d/replies"):format(repo, c.gh_pr, c.gh_id)
+      vim.fn.jobstart({ "gh", "api", endpoint, "--method", "POST", "-f", "body=" .. text }, {
+        on_exit = function(_, code)
+          if code == 0 then
+            vim.notify("[zpr] reply posted to GitHub", vim.log.levels.INFO)
+          else
+            vim.notify("[zpr] failed to post reply — check gh auth", vim.log.levels.ERROR)
+          end
+        end,
+      })
+    end)
+  end)
+end
+
 -- Edit the comment that covers `new_line` interactively.
+-- For locked (GitHub-imported) comments, posts a threaded reply instead.
 function M.edit_at(file_path, new_line)
   local c = M.find_at(file_path, new_line)
   if not c then return end
   if c.locked then
-    vim.notify("[zpr] this comment was imported from GitHub and cannot be edited", vim.log.levels.WARN)
+    reply_to(c)
     return
   end
 
@@ -281,7 +319,7 @@ function M.edit_at(file_path, new_line)
       if c.after_buf and vim.api.nvim_buf_is_valid(c.after_buf) then
         pcall(vim.api.nvim_buf_del_extmark, c.after_buf, ns_comment, c.comment_id)
       end
-      c.comment_id = render_comment(c.after_buf, last - 1, text, c.new_line, c.new_line_end, c.locked)
+      c.comment_id = render_comment(c.after_buf, last - 1, text, c.new_line, c.new_line_end, c.locked, c.gh_author)
       save()
     end)
   end)

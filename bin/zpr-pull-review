@@ -86,14 +86,17 @@ def position_to_new_line(diff_hunk, position):
     return None
 
 
-def gh_to_zpr(gh_comment):
+def gh_to_zpr(gh_comment, pr_number):
     """
     Convert a GitHub PR review comment to a zpr comment record.
 
-    RIGHT-side comments with a `line` field are imported as normal editable
-    comments.  LEFT-side comments and position-only (legacy) comments are
-    imported as locked (read-only) with an approximated new-file line so they
-    still appear in the diff view, marked with ⊘ instead of │.
+    RIGHT-side comments with a `line` field are imported as locked (all
+    imported comments are locked since they belong to GitHub).  LEFT-side
+    and position-only (legacy) comments are also imported as locked with
+    approximated new-file line numbers.
+
+    All records carry gh_id / gh_author / gh_pr so the plugin can display
+    the author and post threaded replies via the GitHub API.
 
     Returns None only if no usable line information can be derived at all.
     """
@@ -104,43 +107,48 @@ def gh_to_zpr(gh_comment):
     diff_hunk  = gh_comment.get("diff_hunk", "")
     path       = gh_comment["path"]
     body       = gh_comment["body"]
+    gh_id      = gh_comment["id"]
+    gh_author  = gh_comment.get("user", {}).get("login", "")
+
+    base = {
+        "hunk_index": 1,
+        "locked":     True,
+        "gh_id":      gh_id,
+        "gh_author":  gh_author,
+        "gh_pr":      pr_number,
+    }
 
     if side == "RIGHT" and line is not None:
-        # Normal case: precise right-side comment — fully editable
         return {
+            **base,
             "file":         path,
             "new_line":     start_line if start_line else line,
             "new_line_end": line if (start_line and start_line != line) else None,
             "old_line":     line,
             "body":         body,
-            "hunk_index":   1,
         }
 
-    # --- Locked cases ---
+    # --- Approximate line mapping for LEFT-side / position-only ---
     new_line = None
 
     if side == "LEFT" and line is not None:
-        # Left-side comment: approximate position via diff hunk, fall back to
-        # the left-side line number (close enough for most purposes).
         new_line = position_to_new_line(diff_hunk, position) if position else None
         if new_line is None:
             new_line = line
 
     elif position is not None:
-        # Legacy position-only comment: map through the diff hunk.
         new_line = position_to_new_line(diff_hunk, position)
 
     if new_line is None:
         return None  # truly unmappable — skip
 
     return {
+        **base,
         "file":         path,
         "new_line":     new_line,
         "new_line_end": None,
         "old_line":     line or new_line,
         "body":         body,
-        "hunk_index":   1,
-        "locked":       True,
     }
 
 
@@ -207,19 +215,14 @@ def main():
 
     # Convert to zpr format
     imported = []
-    locked_count = 0
-    skipped      = 0
+    skipped  = 0
     for ghc in gh_comments:
-        zc = gh_to_zpr(ghc)
+        zc = gh_to_zpr(ghc, args.pr_number)
         if zc:
-            if zc.get("locked"):
-                locked_count += 1
             imported.append(zc)
         else:
             skipped += 1
 
-    if locked_count:
-        print(f"  {locked_count} comment(s) imported as locked (LEFT-side or position-only; line numbers are approximate)")
     if skipped:
         print(f"  {skipped} comment(s) skipped (no usable line information)")
 

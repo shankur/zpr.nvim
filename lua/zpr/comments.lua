@@ -52,6 +52,7 @@ local function save()
       old_line     = c.old_line,
       body         = c.body,
       hunk_index   = c.hunk_index,
+      locked       = c.locked or nil,
     })
   end
   local f = io.open(path, "w")
@@ -61,21 +62,24 @@ local function save()
 end
 
 -- Build the prefix shown before the comment body.
--- Single-line: "  💬 :5 "   Range: "  💬 [5–8] "
-local function comment_prefix(new_line, new_line_end)
+-- Normal:  "  │ :5 "   Range: "  │ [5–8] "   Locked: "  ⊘ :5 "
+local function comment_prefix(new_line, new_line_end, locked)
+  local icon = locked and "⊘" or "│"
   if new_line_end and new_line_end > new_line then
-    return ("   [%d–%d] "):format(new_line, new_line_end)
+    return ("  %s [%d–%d] "):format(icon, new_line, new_line_end)
   end
-  return ("   :%d "):format(new_line)
+  return ("  %s :%d "):format(icon, new_line)
 end
 
 -- Render the comment virt_line below `line_0` (0-based) in the after buffer.
-local function render_comment(buf, line_0, body, new_line, new_line_end)
+local function render_comment(buf, line_0, body, new_line, new_line_end, locked)
+  local bar_hl  = locked and "ZprCommentBarLocked" or "ZprCommentBar"
+  local body_hl = locked and "ZprCommentLocked"    or "ZprComment"
   return vim.api.nvim_buf_set_extmark(buf, ns_comment, line_0, 0, {
     virt_lines = {
       {
-        { comment_prefix(new_line, new_line_end), "ZprCommentBar" },
-        { body, "ZprComment" },
+        { comment_prefix(new_line, new_line_end, locked), bar_hl },
+        { body, body_hl },
       },
     },
   })
@@ -101,24 +105,28 @@ end
 
 -- Highlight the source lines the comment refers to with a background tint
 -- and a sign column glyph. Returns a list of extmark IDs.
-local function render_comment_lines(buf, new_line, new_line_end)
-  local last = new_line_end or new_line
-  local ids  = {}
-  for lnum = new_line, last do
+local function render_comment_lines(buf, new_line, new_line_end, locked)
+  local buf_lines = vim.api.nvim_buf_line_count(buf)
+  local last      = math.min(new_line_end or new_line, buf_lines)
+  local first     = math.min(new_line, buf_lines)
+  local sign_hl   = locked and "ZprCommentBarLocked" or "ZprCommentBar"
+  local line_hl   = locked and "ZprCommentLineLocked" or "ZprCommentLine"
+  local ids = {}
+  for lnum = first, last do
     local sign
-    if new_line == last then
-      sign = "│"   -- single line
-    elseif lnum == new_line then
-      sign = "╭"   -- range start
+    if first == last then
+      sign = locked and "⊘" or "│"
+    elseif lnum == first then
+      sign = "╭"
     elseif lnum == last then
-      sign = "╰"   -- range end
+      sign = "╰"
     else
-      sign = "│"   -- range middle
+      sign = "│"
     end
     local id = vim.api.nvim_buf_set_extmark(buf, ns_lines, lnum - 1, 0, {
       sign_text     = sign,
-      sign_hl_group = "ZprCommentBar",
-      line_hl_group = "ZprCommentLine",
+      sign_hl_group = sign_hl,
+      line_hl_group = line_hl,
     })
     table.insert(ids, id)
   end
@@ -126,14 +134,15 @@ local function render_comment_lines(buf, new_line, new_line_end)
 end
 
 -- Place the comment extmark and filler, returning their IDs.
-local function place(after_buf, before_buf, new_line, new_line_end, old_line, body)
-  -- Anchor below the last line of the range (0-based)
-  local anchor = (new_line_end or new_line) - 1
-  local comment_id = render_comment(after_buf, anchor, body, new_line, new_line_end)
+local function place(after_buf, before_buf, new_line, new_line_end, old_line, body, locked)
+  -- Clamp anchor to buffer bounds (important for approximate locked lines)
+  local after_lines = vim.api.nvim_buf_line_count(after_buf)
+  local anchor = math.min((new_line_end or new_line) - 1, math.max(0, after_lines - 1))
+  local comment_id = render_comment(after_buf, anchor, body, new_line, new_line_end, locked)
   local before_lines = vim.api.nvim_buf_line_count(before_buf)
   local filler_line  = math.min(old_line - 1, math.max(0, before_lines - 1))
   local filler_id    = before_lines > 0 and render_filler(before_buf, filler_line) or nil
-  local line_ids     = render_comment_lines(after_buf, new_line, new_line_end)
+  local line_ids     = render_comment_lines(after_buf, new_line, new_line_end, locked)
   return comment_id, filler_id, line_ids
 end
 
@@ -148,7 +157,7 @@ function M.render_all(file_path)
   for _, c in ipairs(comments()) do
     if c.file == file_path then
       c.comment_id, c.filler_id, c.line_ids = place(
-        after_buf, before_buf, c.new_line, c.new_line_end, c.old_line, c.body)
+        after_buf, before_buf, c.new_line, c.new_line_end, c.old_line, c.body, c.locked)
       c.after_buf  = after_buf
       c.before_buf = before_buf
     end
@@ -198,7 +207,8 @@ end
 
 -- Add a comment directly (non-interactive, for RPC / Claude).
 -- Renders immediately if the file is currently open in the diff view.
-function M.add_direct(file_path, new_line, new_line_end, hunk_index, body)
+-- Pass locked=true for imported comments that should not be editable.
+function M.add_direct(file_path, new_line, new_line_end, hunk_index, body, locked)
   if not body or vim.trim(body) == "" then return false end
   local after_buf  = _G.zpr_state and _G.zpr_state.right_buf
   local before_buf = _G.zpr_state and _G.zpr_state.left_buf
@@ -213,7 +223,7 @@ function M.add_direct(file_path, new_line, new_line_end, hunk_index, body)
   and before_buf and vim.api.nvim_buf_is_valid(before_buf)
   and (r and r.file_path == file_path) then
     comment_id, filler_id, line_ids = place(
-      after_buf, before_buf, new_line, new_line_end, old_line, body)
+      after_buf, before_buf, new_line, new_line_end, old_line, body, locked)
   end
 
   table.insert(comments(), {
@@ -223,6 +233,7 @@ function M.add_direct(file_path, new_line, new_line_end, hunk_index, body)
     old_line     = old_line,
     body         = body,
     hunk_index   = hunk_index,
+    locked       = locked,
     comment_id   = comment_id,
     filler_id    = filler_id,
     line_ids     = line_ids or {},
@@ -248,6 +259,10 @@ end
 function M.edit_at(file_path, new_line)
   local c = M.find_at(file_path, new_line)
   if not c then return end
+  if c.locked then
+    vim.notify("[zpr] this comment was imported from GitHub and cannot be edited", vim.log.levels.WARN)
+    return
+  end
 
   local fname  = vim.fn.fnamemodify(file_path, ":t")
   local last   = c.new_line_end or c.new_line
@@ -266,7 +281,7 @@ function M.edit_at(file_path, new_line)
       if c.after_buf and vim.api.nvim_buf_is_valid(c.after_buf) then
         pcall(vim.api.nvim_buf_del_extmark, c.after_buf, ns_comment, c.comment_id)
       end
-      c.comment_id = render_comment(c.after_buf, last - 1, text, c.new_line, c.new_line_end)
+      c.comment_id = render_comment(c.after_buf, last - 1, text, c.new_line, c.new_line_end, c.locked)
       save()
     end)
   end)

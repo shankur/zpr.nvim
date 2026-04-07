@@ -124,9 +124,13 @@ zpr-pull-review 42 --replace   # discard local comments, import only GitHub's
 zpr-pull-review 42 --repo-path /path/to/repo
 ```
 
-Comments are deduplicated by file + line + body. After writing the file, the script calls `zpr-call reload_comments` to update any running Neovim session automatically. LEFT-side comments and legacy position-only comments (which cannot be mapped to file line numbers without re-parsing the diff) are skipped with a notice.
+Comments are deduplicated by file + line + body. After writing the file, the script calls `zpr-call reload_comments` to update any running Neovim session automatically.
 
-> **Note**: GitHub review comments must have been posted using the `line`/`side` fields (the modern API) to be importable. Very old comments using only the `position` field cannot be mapped to file line numbers.
+All comment types are imported:
+- **RIGHT-side comments** with a `line` field are imported as normal, fully editable comments.
+- **LEFT-side comments** and **legacy position-only comments** are imported as **locked** — they appear in the diff view with a `⊘` marker and muted gray color instead of the normal amber, and their line numbers are approximated by parsing the diff hunk. Locked comments cannot be edited but can be deleted.
+
+Only comments with truly no usable line information (malformed diff hunk + no line field) are skipped.
 
 ### `zpr-push-review`
 

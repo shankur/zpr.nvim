@@ -64,6 +64,32 @@ local function save()
   require("zpr.sidebar").refresh()
 end
 
+-- Word-wrap `text` to `width` characters per line, respecting explicit newlines.
+-- Returns a list of strings (at least one).
+local function wrap_body(text, width)
+  if width <= 0 then return { text } end
+  local result = {}
+  for _, para in ipairs(vim.split(text, "\n", { plain = true })) do
+    if para == "" then
+      table.insert(result, "")
+    else
+      local cur = ""
+      for word in (para .. " "):gmatch("(%S+)%s") do
+        if cur == "" then
+          cur = word
+        elseif #cur + 1 + #word <= width then
+          cur = cur .. " " .. word
+        else
+          table.insert(result, cur)
+          cur = word
+        end
+      end
+      if cur ~= "" then table.insert(result, cur) end
+    end
+  end
+  return #result > 0 and result or { text }
+end
+
 -- Build the prefix shown before the comment body.
 -- Normal:   "  │ :5 "          Range: "  │ [5–8] "
 -- Locked:   "  ⊘ @alice :5 "   Range: "  ⊘ @alice [5–8] "
@@ -77,16 +103,27 @@ local function comment_prefix(new_line, new_line_end, locked, gh_author)
 end
 
 -- Render the comment virt_line below `line_0` (0-based) in the after buffer.
+-- Long bodies are word-wrapped; set vim.g.zpr_comment_wrap to change the width
+-- (default 80). Set to 0 to disable wrapping.
 local function render_comment(buf, line_0, body, new_line, new_line_end, locked, gh_author)
   local bar_hl  = locked and "ZprCommentBarLocked" or "ZprCommentBar"
   local body_hl = locked and "ZprCommentLocked"    or "ZprComment"
+  local prefix   = comment_prefix(new_line, new_line_end, locked, gh_author)
+  local prefix_w = vim.fn.strdisplaywidth(prefix)
+  local wrap     = vim.g.zpr_comment_wrap or 80
+  local chunks   = wrap_body(body, wrap > 0 and math.max(20, wrap - prefix_w) or 0)
+  local indent   = string.rep(" ", prefix_w)
+
+  local virt_lines = {}
+  for i, chunk in ipairs(chunks) do
+    table.insert(virt_lines, {
+      { i == 1 and prefix or indent, bar_hl },
+      { chunk, body_hl },
+    })
+  end
+
   return vim.api.nvim_buf_set_extmark(buf, ns_comment, line_0, 0, {
-    virt_lines = {
-      {
-        { comment_prefix(new_line, new_line_end, locked, gh_author), bar_hl },
-        { body, body_hl },
-      },
-    },
+    virt_lines = virt_lines,
   })
 end
 

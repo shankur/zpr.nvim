@@ -68,6 +68,15 @@ By default all state is stored under `~/.zpr/`. Override with:
 export ZPR_CONFIG_DIR=/path/to/your/dir
 ```
 
+### Comment wrap width
+
+Inline comments are word-wrapped at 80 characters by default. Override with:
+
+```lua
+vim.g.zpr_comment_wrap = 100  -- wrap at 100 chars
+vim.g.zpr_comment_wrap = 0    -- disable wrapping
+```
+
 | Path | Purpose |
 |---|---|
 | `$ZPR_CONFIG_DIR/nvim.sock` | Neovim RPC socket location |

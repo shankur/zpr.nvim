@@ -364,6 +364,11 @@ end
 
 -- Delete the comment starting at new_line (1-based).
 function M.delete_at(after_buf, file_path, new_line)
+  local target = M.find_at(file_path, new_line)
+  if target and target.locked then
+    vim.notify("[zpr] imported GitHub comments cannot be deleted", vim.log.levels.WARN)
+    return
+  end
   local remaining = {}
   local deleted = false
   for _, c in ipairs(comments()) do

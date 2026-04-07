@@ -26,7 +26,15 @@ function M.setup()
   M.handlers["next_file"]      = function(p) return diff().next_file(p) end
   M.handlers["prev_file"]      = function(p) return diff().prev_file(p) end
   M.handlers["get_comments"]   = function(_) return comments().get_all() end
-  M.handlers["clear_comments"] = function(_) comments().clear(); return {} end
+  M.handlers["clear_comments"]   = function(_) comments().clear(); return {} end
+  M.handlers["reload_comments"]  = function(_)
+    _G.zpr_state.comments = {}
+    comments().load()
+    local r = diff().review
+    if r.file_path then comments().render_all(r.file_path) end
+    require("zpr.sidebar").refresh()
+    return {}
+  end
   M.handlers["add_comment"]    = function(p)
     local hunks = diff().review.hunks
     if hunks and #hunks > 0 then
@@ -210,6 +218,40 @@ function M.setup()
   vim.api.nvim_create_user_command("ZprSidebar", function()
     require("zpr.sidebar").toggle()
   end, { desc = "zpr: toggle file/hunk sidebar" })
+
+  vim.api.nvim_create_user_command("ZprPullReview", function(opts)
+    local pr = vim.trim(opts.args)
+    if pr == "" then
+      vim.notify("[zpr] usage: :ZprPullReview <pr-number>", vim.log.levels.WARN)
+      return
+    end
+    local script = _plugin_root .. "/bin/zpr-pull-review"
+    local extra  = opts.bang and { "--replace" } or {}
+    local cmd    = vim.list_extend({ script, pr }, extra)
+    vim.fn.jobstart(cmd, {
+      stdout_buffered = true,
+      stderr_buffered = true,
+      on_stdout = function(_, data)
+        local msg = vim.trim(table.concat(data, "\n"))
+        if msg ~= "" then vim.notify("[zpr] " .. msg, vim.log.levels.INFO) end
+      end,
+      on_stderr = function(_, data)
+        local msg = vim.trim(table.concat(data, "\n"))
+        if msg ~= "" then vim.notify("[zpr] " .. msg, vim.log.levels.WARN) end
+      end,
+      on_exit = function(_, code)
+        if code == 0 then
+          -- Script already called reload_comments via zpr-call; also reload
+          -- in-process in case this Neovim is the one being reviewed in.
+          _G.zpr_state.comments = {}
+          comments().load()
+          local r = diff().review
+          if r.file_path then comments().render_all(r.file_path) end
+          require("zpr.sidebar").refresh()
+        end
+      end,
+    })
+  end, { nargs = 1, bang = true, desc = "zpr: import GitHub PR review comments (! = replace local)" })
 
   vim.api.nvim_create_user_command("ZprPushReview", function(opts)
     local pr = vim.trim(opts.args)

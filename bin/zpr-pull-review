@@ -1,0 +1,206 @@
+#!/usr/bin/env python3
+"""
+zpr-pull-review: import existing GitHub PR review comments into zpr.
+
+Usage:
+  zpr-pull-review <pr-number> [--repo-path /path/to/repo] [--replace]
+
+Fetches all review comments from the given PR and merges them into the local
+zpr comments file. Existing local comments are preserved; GitHub comments
+already imported (matched by file + line + body) are skipped.
+
+Pass --replace to discard local comments and import only GitHub comments.
+
+After writing the comments file, calls `zpr-call reload_comments` to update
+the live Neovim state (no-op if Neovim is not running).
+"""
+
+import sys
+import json
+import subprocess
+import os
+import re
+import argparse
+
+
+def run(cmd, stdin_data=None, check=True):
+    result = subprocess.run(cmd, capture_output=True, text=True, input=stdin_data)
+    if check and result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or result.stdout.strip())
+    return result
+
+
+def get_pr_info(pr_number):
+    r = run(["gh", "pr", "view", str(pr_number),
+             "--json", "headRefOid,headRefName,number,title"])
+    return json.loads(r.stdout)
+
+
+def get_repo_name():
+    r = run(["gh", "repo", "view", "--json", "nameWithOwner"])
+    return json.loads(r.stdout)["nameWithOwner"]
+
+
+def get_repo_path():
+    r = run(["git", "rev-parse", "--show-toplevel"])
+    return r.stdout.strip()
+
+
+def comments_file_path(config_dir, repo_path, ref):
+    """Mirror the path logic in config.lua."""
+    repo_name = os.path.basename(repo_path.rstrip("/"))
+    key = re.sub(r'[/~:^ \t\n\r]', '-', ref)
+    return os.path.join(config_dir, "reviews", repo_name, f"comments_{key}.json")
+
+
+def fetch_pr_comments(repo_name, pr_number):
+    """Fetch all review comments (inline) from a PR, handling pagination."""
+    r = run(["gh", "api", "--paginate",
+             f"repos/{repo_name}/pulls/{pr_number}/comments"])
+    return json.loads(r.stdout)
+
+
+def gh_to_zpr(gh_comment):
+    """
+    Convert a GitHub PR review comment to a zpr comment record.
+
+    GitHub fields used:
+      path        — relative file path
+      line        — actual line number in the file (RIGHT/new side)
+      start_line  — start of a multi-line comment (may be null)
+      side        — "LEFT" or "RIGHT"; we only import RIGHT-side comments
+      body        — comment text
+
+    Returns None if the comment cannot be mapped (e.g. LEFT-side only,
+    or no usable line number).
+    """
+    side = gh_comment.get("side", "RIGHT")
+    if side != "RIGHT":
+        return None
+
+    line = gh_comment.get("line")
+    if line is None:
+        # Some older comments only have `position` (offset into diff).
+        # Without re-parsing the diff we cannot map this to a file line.
+        return None
+
+    start_line = gh_comment.get("start_line")  # null for single-line comments
+
+    return {
+        "file":         gh_comment["path"],
+        "new_line":     start_line if start_line else line,
+        "new_line_end": line if (start_line and start_line != line) else None,
+        "old_line":     line,   # approximate; zpr recomputes from hunk on render
+        "body":         gh_comment["body"],
+        "hunk_index":   1,      # approximate; sidebar marker still works correctly
+    }
+
+
+def dedup_key(c):
+    return (c["file"], c["new_line"], c.get("new_line_end"), c["body"])
+
+
+def load_json(path):
+    if not os.path.exists(path):
+        return []
+    with open(path) as f:
+        return json.load(f)
+
+
+def save_json(path, data):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Import GitHub PR review comments into zpr")
+    parser.add_argument("pr_number", type=int, help="PR number")
+    parser.add_argument("--repo-path", default=None,
+                        help="Path to the git repo (default: cwd)")
+    parser.add_argument("--replace", action="store_true",
+                        help="Replace local comments instead of merging")
+    args = parser.parse_args()
+
+    config_dir = os.environ.get("ZPR_CONFIG_DIR", os.path.expanduser("~/.zpr"))
+
+    try:
+        repo_path = args.repo_path or get_repo_path()
+    except RuntimeError as e:
+        print(f"zpr: could not determine repo path: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        pr_info = get_pr_info(args.pr_number)
+    except RuntimeError as e:
+        print(f"zpr: could not fetch PR #{args.pr_number}: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    head_ref = pr_info["headRefName"]
+    head_sha = pr_info["headRefOid"]
+    print(f"PR #{pr_info['number']}: {pr_info['title']}")
+    print(f"Head: {head_ref} ({head_sha[:8]})")
+
+    try:
+        repo_name = get_repo_name()
+    except RuntimeError as e:
+        print(f"zpr: could not determine GitHub repo: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # Fetch GitHub comments
+    try:
+        gh_comments = fetch_pr_comments(repo_name, args.pr_number)
+    except RuntimeError as e:
+        print(f"zpr: could not fetch PR comments: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Fetched {len(gh_comments)} comment(s) from GitHub")
+
+    # Convert to zpr format
+    imported = []
+    skipped  = 0
+    for ghc in gh_comments:
+        zc = gh_to_zpr(ghc)
+        if zc:
+            imported.append(zc)
+        else:
+            skipped += 1
+
+    if skipped:
+        print(f"Skipped {skipped} comment(s) (LEFT-side or position-only; cannot map to file lines)")
+
+    # Resolve the comments file — prefer branch name, fall back to SHA
+    comments_path = None
+    for ref in [head_ref, head_sha]:
+        p = comments_file_path(config_dir, repo_path, ref)
+        if os.path.exists(p) or ref == head_ref:
+            comments_path = p
+            break
+
+    # Merge with existing local comments (unless --replace)
+    existing = [] if args.replace else load_json(comments_path)
+    existing_keys = {dedup_key(c) for c in existing}
+
+    new_count = 0
+    for zc in imported:
+        if dedup_key(zc) not in existing_keys:
+            existing.append(zc)
+            existing_keys.add(dedup_key(zc))
+            new_count += 1
+
+    save_json(comments_path, existing)
+    print(f"Imported {new_count} new comment(s) → {comments_path}")
+    if new_count == 0 and imported:
+        print("(all GitHub comments were already present locally)")
+
+    # Notify live Neovim session (best-effort; no error if not running)
+    try:
+        run(["zpr-call", "reload_comments"], check=True)
+        print("Live Neovim session updated")
+    except (RuntimeError, FileNotFoundError):
+        pass  # Neovim not running or zpr-call not found — that's fine
+
+
+if __name__ == "__main__":
+    main()

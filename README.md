@@ -44,7 +44,7 @@ Using [lazy.nvim](https://github.com/folke/lazy.nvim):
     local src = vim.fn.stdpath("data") .. "/lazy/zpr.nvim"
     local bin = vim.fn.expand("~/.local/bin")
     vim.fn.mkdir(bin, "p")
-    for _, script in ipairs({ "zpr-call", "zpr-parse-diff", "zpr-push-review" }) do
+    for _, script in ipairs({ "zpr-call", "zpr-parse-diff", "zpr-push-review", "zpr-pull-review" }) do
       vim.fn.system("ln -sf " .. src .. "/bin/" .. script .. " " .. bin .. "/" .. script)
     end
     vim.fn.system("ln -sf " .. src .. "/skills/zpr-review ~/.claude/skills/zpr-review")
@@ -114,6 +114,20 @@ Reads a unified diff from stdin and outputs a JSON array of files with hunks:
 git diff HEAD~1 HEAD | zpr-parse-diff
 ```
 
+### `zpr-pull-review`
+
+Imports existing GitHub PR review comments into the local zpr comments file:
+
+```sh
+zpr-pull-review 42              # merge GitHub comments with local ones
+zpr-pull-review 42 --replace   # discard local comments, import only GitHub's
+zpr-pull-review 42 --repo-path /path/to/repo
+```
+
+Comments are deduplicated by file + line + body. After writing the file, the script calls `zpr-call reload_comments` to update any running Neovim session automatically. LEFT-side comments and legacy position-only comments (which cannot be mapped to file line numbers without re-parsing the diff) are skipped with a notice.
+
+> **Note**: GitHub review comments must have been posted using the `line`/`side` fields (the modern API) to be importable. Very old comments using only the `position` field cannot be mapped to file line numbers.
+
 ### `zpr-push-review`
 
 Pushes the inline comments from the current review to GitHub as a PR review:
@@ -165,6 +179,8 @@ zpr-call open_file '{
 | `:ZprClose` | Close review |
 | `:ZprStatus` | Show current file / hunk / comment count |
 | `:ZprReload` | Hot-reload all plugin modules |
+| `:ZprPullReview <n>` | Import GitHub PR review comments for PR #n (merge) |
+| `:ZprPullReview! <n>` | Same, but replace local comments instead of merging |
 | `:ZprPushReview <n>` | Push inline comments to GitHub PR #n |
 | `:ZprPushReview! <n>` | Same, but submit as REQUEST_CHANGES |
 
@@ -217,4 +233,5 @@ bin/
   zpr-call            send RPC calls from the terminal
   zpr-parse-diff      parse unified diffs to JSON
   zpr-push-review     push zpr comments to a GitHub PR review
+  zpr-pull-review     import GitHub PR review comments into zpr
 ```

@@ -15,6 +15,22 @@ local function is_open()
   return swin ~= nil and vim.api.nvim_win_is_valid(swin)
 end
 
+local function file_has_comments(file_path)
+  local cs = _G.zpr_state and _G.zpr_state.comments or {}
+  for _, c in ipairs(cs) do
+    if c.file == file_path then return true end
+  end
+  return false
+end
+
+local function hunk_has_comments(file_path, hunk_index)
+  local cs = _G.zpr_state and _G.zpr_state.comments or {}
+  for _, c in ipairs(cs) do
+    if c.file == file_path and c.hunk_index == hunk_index then return true end
+  end
+  return false
+end
+
 local function hunk_header(h)
   local diff = require("zpr.diff")
   return diff.parse_hunk_header(h).header or h
@@ -37,15 +53,17 @@ function M.refresh()
   local r     = _G.zpr_state or {}
   local files = r.files or {}
 
-  local lines   = {}
-  local new_map = {}
-  local hls     = {}   -- { lnum_0based, hl_group }
+  local lines        = {}
+  local new_map      = {}
+  local hls          = {}   -- { lnum_0based, hl_group }
+  local comment_hls  = {}   -- { lnum_0based, col_start } for ✎ markers
 
-  local function push(text, item, hl)
+  local function push(text, item, hl, comment_mark)
     table.insert(lines, text)
     local lnum = #lines
-    if item then new_map[lnum] = item end
-    if hl   then table.insert(hls, { lnum - 1, hl }) end
+    if item         then new_map[lnum] = item end
+    if hl           then table.insert(hls, { lnum - 1, hl }) end
+    if comment_mark then table.insert(comment_hls, { lnum - 1, #text - #"✎" }) end
     return lnum
   end
 
@@ -57,19 +75,30 @@ function M.refresh()
   else
     for fi, f in ipairs(files) do
       local is_cur_file = (r.file_index == fi)
-      local icon  = is_cur_file and "▶ " or "  "
-      local label = short_path(f.file_path)
-      push(("  %s%s"):format(icon, label),
+      local is_viewed   = require("zpr.viewed").is_viewed(f.file_path)
+      local icon        = is_viewed and "✓ " or (is_cur_file and "▶ " or "  ")
+      local label       = short_path(f.file_path)
+      local f_has_c     = file_has_comments(f.file_path)
+      local file_hl     = is_viewed and "ZprSidebarFileViewed"
+                          or (is_cur_file and "ZprSidebarFileCurrent" or "ZprSidebarFile")
+      local file_text   = ("  %s%s%s"):format(icon, label, f_has_c and " ✎" or "")
+      push(file_text,
         { kind = "file", file_index = fi },
-        is_cur_file and "ZprSidebarFileCurrent" or "ZprSidebarFile")
+        file_hl,
+        f_has_c)
 
-      for hi, h in ipairs(f.hunks or {}) do
-        local is_cur = is_cur_file and r.hunk_index == hi
-        local bullet = is_cur and "● " or "○ "
-        local header = hunk_header(h):sub(1, WIDTH - 8)
-        push(("    %s%s"):format(bullet, header),
-          { kind = "hunk", file_index = fi, hunk_index = hi },
-          is_cur and "ZprSidebarHunkCurrent" or "ZprSidebarHunk")
+      if not is_viewed then
+        for hi, h in ipairs(f.hunks or {}) do
+          local is_cur    = is_cur_file and r.hunk_index == hi
+          local bullet    = is_cur and "● " or "○ "
+          local header    = hunk_header(h):sub(1, WIDTH - 8)
+          local h_has_c   = hunk_has_comments(f.file_path, hi)
+          local hunk_text = ("    %s%s%s"):format(bullet, header, h_has_c and " ✎" or "")
+          push(hunk_text,
+            { kind = "hunk", file_index = fi, hunk_index = hi },
+            is_cur and "ZprSidebarHunkCurrent" or "ZprSidebarHunk",
+            h_has_c)
+        end
       end
       push("", nil, nil)
     end
@@ -86,6 +115,14 @@ function M.refresh()
   for _, hl in ipairs(hls) do
     vim.api.nvim_buf_set_extmark(sbuf, ns, hl[1], 0, {
       line_hl_group = hl[2], priority = 100
+    })
+  end
+  local mark_bytes = #"✎"
+  for _, cm in ipairs(comment_hls) do
+    vim.api.nvim_buf_set_extmark(sbuf, ns, cm[1], cm[2], {
+      end_col  = cm[2] + mark_bytes,
+      hl_group = "ZprSidebarCommentMark",
+      priority = 110,
     })
   end
 
@@ -166,6 +203,17 @@ local function activate()
   end
 end
 
+local function toggle_viewed_at_cursor()
+  if not is_open() then return end
+  local row  = vim.api.nvim_win_get_cursor(swin)[1]
+  local item = line_map[row]
+  if not item or item.kind == "header" then return end
+  local r = _G.zpr_state or {}
+  local f = r.files and r.files[item.file_index]
+  if not f then return end
+  require("zpr.viewed").toggle(f.file_path)
+end
+
 -- ── open / close / toggle ──────────────────────────────────────────────────
 
 function M.open()
@@ -200,8 +248,9 @@ function M.open()
   vim.keymap.set("n", "k",      function() move("up")   end,   vim.tbl_extend("force", opts, { desc = "zpr sidebar: up" }))
   vim.keymap.set("n", "<Down>", function() move("down") end,   vim.tbl_extend("force", opts, { desc = "zpr sidebar: down" }))
   vim.keymap.set("n", "<Up>",   function() move("up")   end,   vim.tbl_extend("force", opts, { desc = "zpr sidebar: up" }))
-  vim.keymap.set("n", "<CR>",   activate,                      vim.tbl_extend("force", opts, { desc = "zpr sidebar: jump to hunk" }))
-  vim.keymap.set("n", "q",      function() M.close() end,      vim.tbl_extend("force", opts, { desc = "zpr sidebar: close" }))
+  vim.keymap.set("n", "<CR>",   activate,                             vim.tbl_extend("force", opts, { desc = "zpr sidebar: jump to hunk" }))
+  vim.keymap.set("n", "v",      toggle_viewed_at_cursor,              vim.tbl_extend("force", opts, { desc = "zpr sidebar: toggle file viewed" }))
+  vim.keymap.set("n", "q",      function() M.close() end,             vim.tbl_extend("force", opts, { desc = "zpr sidebar: close" }))
 
   M.refresh()
 

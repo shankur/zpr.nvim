@@ -19,6 +19,11 @@ function M.comments_file(repo_path, head_ref)
   return M.reviews_dir(repo_path) .. "/comments_" .. key .. ".json"
 end
 
+function M.viewed_file(repo_path, head_ref)
+  local key = tostring(head_ref):gsub("[/~:^%s]", "-")
+  return M.reviews_dir(repo_path) .. "/viewed_" .. key .. ".json"
+end
+
 function M.socket_file()
   return M.config_dir() .. "/nvim.sock"
 end

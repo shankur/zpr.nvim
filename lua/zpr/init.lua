@@ -236,7 +236,7 @@ function M.setup()
   vim.api.nvim_create_user_command("ZprReload", function()
     _G.zpr_state = nil
     for _, mod in ipairs({ "zpr", "zpr.config", "zpr.diff", "zpr.comments",
-                           "zpr.server", "zpr.highlights", "zpr.sidebar" }) do
+                           "zpr.server", "zpr.highlights", "zpr.sidebar", "zpr.viewed" }) do
       package.loaded[mod] = nil
     end
     require("zpr").setup()

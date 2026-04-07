@@ -10,6 +10,8 @@ A Neovim plugin for reviewing git commits and pull requests inline, with support
   - Single-line and multi-line (visual selection) comments
   - Amber background tint + sign column bracket (`│` / `╭`/`│`/`╰`) on commented lines
   - Comments persisted per-repo per-ref in `~/.zpr/reviews/`
+- Sidebar panel showing all files and hunks with comment and viewed-state indicators
+- Mark files as viewed to collapse their hunks and track review progress
 - RPC server so Claude (or any script) can drive the review from the terminal
 
 ## Claude AI integration
@@ -70,6 +72,7 @@ export ZPR_CONFIG_DIR=/path/to/your/dir
 |---|---|
 | `$ZPR_CONFIG_DIR/nvim.sock` | Neovim RPC socket location |
 | `$ZPR_CONFIG_DIR/reviews/<repo>/comments_<ref>.json` | Persisted comments |
+| `$ZPR_CONFIG_DIR/reviews/<repo>/viewed_<ref>.json` | Persisted viewed-file state |
 
 ## Keymaps
 
@@ -85,6 +88,19 @@ Keymaps are buffer-local and only active inside zpr diff buffers.
 | `<leader>zc` | n | Add / edit comment on current line |
 | `<leader>zc` | v | Add / edit comment on selected line range |
 | `<leader>zd` | n | Delete comment (with confirmation) |
+| `<leader>zt` | n | Toggle sidebar |
+
+### Sidebar keymaps
+
+The sidebar opens with `<leader>zt` or `:ZprSidebar`.
+
+| Key | Action |
+|---|---|
+| `j` / `↓` | Move down |
+| `k` / `↑` | Move up |
+| `<CR>` | Jump to file / hunk under cursor |
+| `v` | Toggle viewed state for file under cursor |
+| `q` | Close sidebar |
 
 ## CLI helpers
 
@@ -152,6 +168,22 @@ zpr-call open_file '{
 | `:ZprPushReview <n>` | Push inline comments to GitHub PR #n |
 | `:ZprPushReview! <n>` | Same, but submit as REQUEST_CHANGES |
 
+## Sidebar
+
+Toggle with `<leader>zt` or `:ZprSidebar`. The panel lists every file and its hunks for the active review.
+
+**Indicators shown on each line:**
+
+| Indicator | Meaning |
+|---|---|
+| `▶` | Currently open file |
+| `✓` | File marked as viewed |
+| `●` | Currently active hunk |
+| `○` | Inactive hunk |
+| `✎` (amber) | File or hunk has at least one comment |
+
+Press `v` on any file or hunk line to toggle that file's viewed state. Viewed files are dimmed and their hunks are collapsed, giving you a compact view of what still needs attention.
+
 ## Comment storage
 
 Comments are saved to:
@@ -160,7 +192,13 @@ Comments are saved to:
 ~/.zpr/reviews/<repo-name>/comments_<head-ref>.json
 ```
 
-They are automatically restored when you reopen the same commit/ref. Clearing comments (`zpr-call clear_comments`) deletes the file.
+Viewed-file state is saved alongside:
+
+```
+~/.zpr/reviews/<repo-name>/viewed_<head-ref>.json
+```
+
+Both are automatically restored when you reopen the same commit/ref.
 
 ## Architecture
 
@@ -170,6 +208,8 @@ lua/zpr/
   init.lua            keymaps, RPC handlers, autocmds
   diff.lua            git file fetching, split layout, hunk/file navigation
   comments.lua        comment CRUD, extmark rendering, persistence
+  viewed.lua          viewed-file state: toggle, persistence, load/save
+  sidebar.lua         file/hunk tree panel with comment and viewed indicators
   highlights.lua      highlight group definitions
   config.lua          ZPR_CONFIG_DIR resolution and path helpers
   server.lua          Neovim RPC socket + global zpr_rpc() entry point

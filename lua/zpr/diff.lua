@@ -207,10 +207,12 @@ function M.open_file(params)
     review.file_index = params.file_index or 1
   end
 
-  -- Load persisted comments when opening a new review
+  -- Load persisted comments and viewed state when opening a new review
   if new_review then
-    _G.zpr_state.comments = {}
+    _G.zpr_state.comments      = {}
+    _G.zpr_state.viewed_files  = {}
     require("zpr.comments").load()
+    require("zpr.viewed").load()
   end
 
   -- Unconditionally update file_index when provided (e.g. from sidebar)

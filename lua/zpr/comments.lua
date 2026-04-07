@@ -56,6 +56,8 @@ local function save()
   end
   local f = io.open(path, "w")
   if f then f:write(vim.json.encode(out)); f:close() end
+  -- Refresh sidebar markers
+  require("zpr.sidebar").refresh()
 end
 
 -- Build the prefix shown before the comment body.

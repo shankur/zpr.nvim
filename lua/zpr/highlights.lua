@@ -23,8 +23,10 @@ function M.setup()
   vim.api.nvim_set_hl(0, "ZprSidebarTitle",      { fg = "#c678dd", bold = true })
   vim.api.nvim_set_hl(0, "ZprSidebarFile",        { fg = "#abb2bf" })
   vim.api.nvim_set_hl(0, "ZprSidebarFileCurrent", { fg = "#61afef", bold = true, bg = "#1e2030" })
+  vim.api.nvim_set_hl(0, "ZprSidebarFileViewed",  { fg = "#4b5263", italic = true })
   vim.api.nvim_set_hl(0, "ZprSidebarHunk",        { fg = "#5c6370", italic = true })
   vim.api.nvim_set_hl(0, "ZprSidebarHunkCurrent", { fg = "#98c379", bold = true, bg = "#1e2d1e" })
+  vim.api.nvim_set_hl(0, "ZprSidebarCommentMark", { fg = "#e5c07b", bold = true })
 end
 
 return M

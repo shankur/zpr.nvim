@@ -1,4 +1,4 @@
-# zpr — zero-friction PR review
+# zpr.nvim — zero-friction PR review
 
 A Neovim plugin for reviewing git commits and pull requests inline, with support for threaded comments, multi-file navigation, and Claude AI integration.
 
@@ -14,17 +14,11 @@ A Neovim plugin for reviewing git commits and pull requests inline, with support
 
 ## Claude AI integration
 
-zpr ships a `/zpr-review` Claude Code skill that drives a full AI-assisted review:
+zpr.nvim ships a `/zpr-review` Claude Code skill that drives a full AI-assisted review:
 Claude reads the diff, prioritizes hunks by risk and complexity, opens them in
 order, and adds inline comments — all without leaving Neovim.
 
-To activate the skill, symlink it into your Claude skills directory:
-
-```sh
-ln -s ~/Repository/zpr/skills/zpr-review ~/.claude/skills/zpr-review
-```
-
-Then in any Claude Code session:
+The skill is symlinked automatically by the lazy.nvim `build` hook. Then in any Claude Code session:
 ```
 /zpr-review abc1234        # review a commit
 /zpr-review 42             # review PR #42
@@ -42,10 +36,27 @@ Then in any Claude Code session:
 Using [lazy.nvim](https://github.com/folke/lazy.nvim):
 
 ```lua
-{ dir = "~/Repository/zpr" }
+{
+  "shankur/zpr.nvim",
+  build = function()
+    local src = vim.fn.stdpath("data") .. "/lazy/zpr.nvim"
+    local bin = vim.fn.expand("~/.local/bin")
+    vim.fn.mkdir(bin, "p")
+    for _, script in ipairs({ "zpr-call", "zpr-parse-diff", "zpr-push-review" }) do
+      vim.fn.system("ln -sf " .. src .. "/bin/" .. script .. " " .. bin .. "/" .. script)
+    end
+    vim.fn.system("ln -sf " .. src .. "/skills/zpr-review ~/.claude/skills/zpr-review")
+    local path = vim.fn.getenv("PATH")
+    if not path:find(bin, 1, true) then
+      vim.notify("zpr.nvim: add " .. bin .. " to your PATH", vim.log.levels.WARN)
+    end
+  end,
+}
 ```
 
-Or any plugin manager pointing at the repo. The plugin auto-loads via `plugin/zpr.lua`.
+The `build` hook runs automatically on install and update. It symlinks the CLI helpers into `~/.local/bin` (creating it if needed) and the Claude skill into `~/.claude/skills/`. A warning is shown in Neovim if `~/.local/bin` is not on your `$PATH`.
+
+The plugin auto-loads via `plugin/zpr.lua`.
 
 ## Configuration
 

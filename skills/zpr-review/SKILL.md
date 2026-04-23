@@ -29,7 +29,7 @@ gh pr diff <number>
 Pipe the diff through `zpr-parse-diff` to get a structured JSON array of files and hunks:
 
 ```sh
-git -C <repo_path> diff <base> <head> | /Users/ansharma/Repository/zpr/bin/zpr-parse-diff
+git -C <repo_path> diff <base> <head> | zpr-parse-diff
 ```
 
 Read the full hunk content carefully — you will need it for analysis.
@@ -56,7 +56,7 @@ Do NOT comment on style, formatting, or trivial things unless they affect correc
 Reorder the `files` array so that the file containing the highest-priority hunk comes first, then the next, etc. Open zpr via `zpr-call open_file` passing the reordered `files` list:
 
 ```sh
-/Users/ansharma/Repository/zpr/bin/zpr-call open_file '<json>'
+zpr-call open_file '<json>'
 ```
 
 The JSON must include:
@@ -74,7 +74,7 @@ The JSON must include:
 For each hunk that warrants a comment, call:
 
 ```sh
-/Users/ansharma/Repository/zpr/bin/zpr-call add_comment '<json>'
+zpr-call add_comment '<json>'
 ```
 
 Parameters:
@@ -114,7 +114,7 @@ If the target was a PR (not just a commit), ask the user:
 If yes, run:
 
 ```sh
-/Users/ansharma/Repository/zpr/bin/zpr-push-review <pr-number>
+zpr-push-review <pr-number>
 ```
 
 Or from Neovim: `:ZprPushReview <pr-number>` (use `:ZprPushReview! <pr-number>` to submit as REQUEST_CHANGES instead of COMMENT).

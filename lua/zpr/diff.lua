@@ -281,6 +281,7 @@ function M.next_hunk_local(_params)
   review.hunk_index = math.min(review.hunk_index + 1, #review.hunks)
   jump_diff("]c")
   update_statuslines()
+  require("zpr.viewed").mark_visited(review.file_path, review.hunk_index)
   M.sync_walk_to_position()
   vim.api.nvim_exec_autocmds("User", { pattern = "ZprHunkChanged", modeline = false })
   return { hunk = review.hunk_index, total = #review.hunks }
@@ -292,6 +293,7 @@ function M.prev_hunk_local(_params)
   review.hunk_index = math.max(review.hunk_index - 1, 1)
   jump_diff("[c")
   update_statuslines()
+  require("zpr.viewed").mark_visited(review.file_path, review.hunk_index)
   M.sync_walk_to_position()
   vim.api.nvim_exec_autocmds("User", { pattern = "ZprHunkChanged", modeline = false })
   return { hunk = review.hunk_index, total = #review.hunks }
@@ -327,6 +329,8 @@ end
 function M.jump_to_walk_step(idx)
   local step = review.walk_order[idx]
   if not step then return { error = "invalid walk index" } end
+
+  require("zpr.viewed").mark_visited(step.file_path, step.hunk_index)
 
   -- If we need to switch files
   if step.file_path ~= review.file_path then

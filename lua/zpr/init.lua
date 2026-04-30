@@ -26,6 +26,7 @@ function M.setup()
   M.handlers["set_walk_order"] = function(p) return diff().set_walk_order(p) end
   M.handlers["close"]          = function(_) vim.schedule(function() diff().close() end); return {} end
   M.handlers["ping"]           = function(_) return { pong = true } end
+  M.handlers["progress"]       = function(_) return require("zpr.viewed").progress() end
   M.handlers["next_file"]      = function(p) return diff().next_file(p) end
   M.handlers["prev_file"]      = function(p) return diff().prev_file(p) end
   M.handlers["get_comments"]   = function(_) return comments().get_all() end
@@ -272,14 +273,10 @@ function M.setup()
     })
   end, { nargs = 1, bang = true, desc = "zpr: import GitHub PR review comments (! = replace local)" })
 
-  vim.api.nvim_create_user_command("ZprPushReview", function(opts)
-    local pr = vim.trim(opts.args)
-    if pr == "" then
-      vim.notify("[zpr] usage: :ZprPushReview <pr-number>", vim.log.levels.WARN)
-      return
-    end
+  -- Helper: actually push the review
+  function M._do_push_review(pr, bang)
     local script = _plugin_root .. "/bin/zpr-push-review"
-    local event  = opts.bang and "REQUEST_CHANGES" or "COMMENT"
+    local event  = bang and "REQUEST_CHANGES" or "COMMENT"
     vim.fn.jobstart({ script, pr, "--event", event }, {
       stdout_buffered = true,
       stderr_buffered = true,
@@ -292,6 +289,38 @@ function M.setup()
         if msg ~= "" then vim.notify("[zpr] " .. msg, vim.log.levels.WARN) end
       end,
     })
+  end
+
+  vim.api.nvim_create_user_command("ZprPushReview", function(opts)
+    local pr = vim.trim(opts.args)
+    if pr == "" then
+      vim.notify("[zpr] usage: :ZprPushReview <pr-number>", vim.log.levels.WARN)
+      return
+    end
+
+    -- Warn about unvisited hunks
+    local viewed = require("zpr.viewed")
+    local progress = viewed.progress()
+    if progress.total > 0 and progress.visited < progress.total then
+      local unvisited = viewed.get_unvisited()
+      local file_set = {}
+      for _, u in ipairs(unvisited) do file_set[u.file_path] = true end
+      local file_list = {}
+      for fp in pairs(file_set) do table.insert(file_list, fp) end
+      local msg = ("[zpr] WARNING: %d/%d hunks not visited (%d files: %s). Push anyway? (y/N)"):format(
+        progress.total - progress.visited, progress.total,
+        #file_list, table.concat(file_list, ", "):sub(1, 80))
+      vim.ui.input({ prompt = msg .. " " }, function(input)
+        if input and input:lower() == "y" then
+          M._do_push_review(pr, opts.bang)
+        else
+          vim.notify("[zpr] Push cancelled. Use ]h to visit remaining hunks.", vim.log.levels.INFO)
+        end
+      end)
+      return
+    end
+
+    M._do_push_review(pr, opts.bang)
   end, { nargs = 1, bang = true, desc = "zpr: push review comments to GitHub PR (! = REQUEST_CHANGES)" })
 
   vim.api.nvim_create_user_command("ZprReload", function()

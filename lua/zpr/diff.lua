@@ -19,6 +19,8 @@ if not _G.zpr_state then
     right_buf  = nil,
     left_win   = nil,
     right_win  = nil,
+    walk_order = {},    -- intelligent review order: [{ file_path, hunk_index }]
+    walk_index = 0,     -- current position in walk_order (0 = not using walk)
   }
 end
 local review = _G.zpr_state
@@ -273,24 +275,130 @@ function M.prev_file(_params)
   })
 end
 
--- Public: jump to next hunk
-function M.next_hunk(_params)
+-- Public: jump to next hunk within current file (]H)
+function M.next_hunk_local(_params)
   if #review.hunks == 0 then return { error = "no hunks loaded" } end
   review.hunk_index = math.min(review.hunk_index + 1, #review.hunks)
   jump_diff("]c")
   update_statuslines()
+  M.sync_walk_to_position()
   vim.api.nvim_exec_autocmds("User", { pattern = "ZprHunkChanged", modeline = false })
   return { hunk = review.hunk_index, total = #review.hunks }
 end
 
--- Public: jump to previous hunk
-function M.prev_hunk(_params)
+-- Public: jump to previous hunk within current file ([H)
+function M.prev_hunk_local(_params)
   if #review.hunks == 0 then return { error = "no hunks loaded" } end
   review.hunk_index = math.max(review.hunk_index - 1, 1)
   jump_diff("[c")
   update_statuslines()
+  M.sync_walk_to_position()
   vim.api.nvim_exec_autocmds("User", { pattern = "ZprHunkChanged", modeline = false })
   return { hunk = review.hunk_index, total = #review.hunks }
+end
+
+-- Public: jump to next step in intelligent walk order (]h)
+-- Falls back to next_hunk_local if no walk order is set.
+function M.next_hunk(_params)
+  if #review.walk_order == 0 then
+    return M.next_hunk_local(_params)
+  end
+  if review.walk_index >= #review.walk_order then
+    return { error = "end of review walk" }
+  end
+  review.walk_index = review.walk_index + 1
+  return M.jump_to_walk_step(review.walk_index)
+end
+
+-- Public: jump to previous step in intelligent walk order ([h)
+-- Falls back to prev_hunk_local if no walk order is set.
+function M.prev_hunk(_params)
+  if #review.walk_order == 0 then
+    return M.prev_hunk_local(_params)
+  end
+  if review.walk_index <= 1 then
+    return { error = "start of review walk" }
+  end
+  review.walk_index = review.walk_index - 1
+  return M.jump_to_walk_step(review.walk_index)
+end
+
+-- Jump to a specific walk step (opens file if needed, then jumps to hunk)
+function M.jump_to_walk_step(idx)
+  local step = review.walk_order[idx]
+  if not step then return { error = "invalid walk index" } end
+
+  -- If we need to switch files
+  if step.file_path ~= review.file_path then
+    -- Find the file in the files list
+    local file_idx = nil
+    for i, f in ipairs(review.files) do
+      if f.file_path == step.file_path then
+        file_idx = i
+        break
+      end
+    end
+    if not file_idx then return { error = "file not in review: " .. step.file_path } end
+
+    review.file_index = file_idx
+    local f = review.files[file_idx]
+    M.open_file({
+      file_path  = f.file_path,
+      hunks      = f.hunks,
+      repo_path  = review.repo_path,
+      base_ref   = review.base_ref,
+      head_ref   = review.head_ref,
+      file_index = file_idx,
+      start_hunk = step.hunk_index,
+    })
+  else
+    -- Same file, just jump to the hunk
+    local target = math.min(step.hunk_index, #review.hunks)
+    if target > review.hunk_index then
+      for _ = 1, target - review.hunk_index do
+        jump_diff("]c")
+      end
+    elseif target < review.hunk_index then
+      for _ = 1, review.hunk_index - target do
+        jump_diff("[c")
+      end
+    end
+    review.hunk_index = target
+    update_statuslines()
+    vim.api.nvim_exec_autocmds("User", { pattern = "ZprHunkChanged", modeline = false })
+  end
+
+  return {
+    walk_step = review.walk_index,
+    walk_total = #review.walk_order,
+    file = step.file_path,
+    hunk = step.hunk_index,
+  }
+end
+
+-- Sync walk_index to match current file/hunk position (after ]H/[H or manual nav)
+function M.sync_walk_to_position()
+  if #review.walk_order == 0 then return end
+  for i, step in ipairs(review.walk_order) do
+    if step.file_path == review.file_path and step.hunk_index == review.hunk_index then
+      review.walk_index = i
+      return
+    end
+  end
+  -- If current position isn't in walk order, find the nearest step in this file
+  for i, step in ipairs(review.walk_order) do
+    if step.file_path == review.file_path then
+      review.walk_index = i
+      return
+    end
+  end
+end
+
+-- Public: set the intelligent walk order
+function M.set_walk_order(params)
+  review.walk_order = params.steps or {}
+  review.walk_index = #review.walk_order > 0 and 1 or 0
+  return { total_steps = #review.walk_order }
 end
 
 -- Public: close the review layout

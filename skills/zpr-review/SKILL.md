@@ -115,9 +115,48 @@ The senior filter agent's job:
 
 The filter agent returns the cleaned JSON array with `hunk_index` added to each entry.
 
-## Step 6 — Open zpr with the prioritized file order
+## Step 6 — Intelligent hunk ordering for human review
 
-From the filtered comments, determine which files have the most/highest-severity findings. Reorder the `files` array accordingly (most important file first).
+The default file-by-file, top-to-bottom order is not optimal for large PRs. Spawn **1 agent** to produce a review order that tells a coherent story and groups related changes together.
+
+Pass the agent:
+- The full parsed diff (file list with hunks)
+- The filtered comments from Step 5 (so it knows where issues are)
+- The file dependency graph (imports, callers)
+
+The ordering agent must follow these principles:
+
+1. **Dependency-aware grouping**: Group related hunks across files together. If a PR changes an interface and all its callers, the interface change should come first, followed by each caller's adaptation. The reviewer should see the "cause" before the "effects."
+
+2. **Logical story order**: Arrange hunks so they tell the story of the change. A new type definition comes before the function that uses it. A configuration change comes before the code that reads it. The reviewer should never see a reference to something they haven't encountered yet.
+
+3. **Tests always last**: Test files (`*_test.*`, `*_spec.*`, `test_*`, `tests/`, `spec/`) are always placed at the end of the review order. Within tests, order them to match the implementation files they test.
+
+The ordering agent returns a JSON array representing the review walk order:
+
+```json
+[
+  { "file_path": "src/types.go", "hunk_indices": [1, 2] },
+  { "file_path": "src/handler.go", "hunk_indices": [3, 1, 2] },
+  { "file_path": "src/handler.go", "hunk_indices": [4] },
+  { "file_path": "src/config.go", "hunk_indices": [1] },
+  { "file_path": "src/handler_test.go", "hunk_indices": [1, 2, 3] }
+]
+```
+
+Note: A file can appear multiple times if its hunks belong to different logical groups. The `hunk_indices` within each entry define the sub-order within that file for that group.
+
+Use this ordering to set the intelligent walk order via RPC:
+
+```sh
+zpr-call set_walk_order '{"steps": [{"file_path": "src/types.go", "hunk_index": 1}, {"file_path": "src/types.go", "hunk_index": 2}, {"file_path": "src/handler.go", "hunk_index": 3}, ...]}'
+```
+
+Each step is a `{ file_path, hunk_index }` pair. The walk order enables `]h`/`[h` to navigate across files following this intelligent sequence.
+
+Then reorder the `files` array to match the first-appearance order of files in the walk, and open zpr.
+
+## Step 7 — Open zpr with the ordered file list
 
 Open zpr:
 ```sh
@@ -125,16 +164,16 @@ zpr-call open_file '<json>'
 ```
 
 The JSON must include:
-- `file_path` — first file to show (highest priority)
+- `file_path` — first file to show
 - `hunks` — that file's hunks
 - `repo_path` — absolute path to the repo
 - `base_ref` — e.g. `abc123~1`
 - `head_ref` — e.g. `abc123`
 - `files` — the full reordered file list: `[{ "file_path": "...", "hunks": [...] }, ...]`
 - `file_index` — 1
-- `start_hunk` — index of the highest-priority hunk within the first file
+- `start_hunk` — index of the first relevant hunk within the first file
 
-## Step 7 — Add inline comments
+## Step 8 — Add inline comments
 
 For each filtered comment, call:
 ```sh
@@ -156,18 +195,24 @@ Prefix the body with `[Category]` (e.g. `[Functional]`, `[Security]`, `[Performa
 
 Add comments for the currently open file first (they render immediately), then switch files with `zpr-call next_file` and add comments there.
 
-## Step 8 — Report to the user
+## Step 9 — Report to the user
 
 After all comments are placed, summarize:
 - How many files and hunks were reviewed
 - How many total findings from the 7 agents vs how many survived the filter
-- The priority order and why (1-2 sentences per file)
+- The review order chosen and why (brief explanation of the logical grouping)
 - A brief list of the comments added, grouped by category
 - Any overall architectural concerns about the change
 
-Remind the user they can navigate with `]f`/`[f` (files), `]h`/`[h` (hunks), and `<leader>zt` to open the sidebar showing the full review order.
+Remind the user they can navigate with:
+- `]h`/`[h` — follow the intelligent walk order (cross-file, logical grouping)
+- `]H`/`[H` — next/prev hunk within the current file only
+- `]f`/`[f` — next/prev file
+- `<leader>zt` — open the sidebar showing the full review order
 
-## Step 9 — Optionally push to GitHub
+Both `]h` and `]H` can be mixed freely — the walk position stays in sync.
+
+## Step 10 — Optionally push to GitHub
 
 If the target was a PR (not just a commit), ask the user:
 

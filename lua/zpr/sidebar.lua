@@ -8,6 +8,7 @@ local WIDTH    = 42
 local sbuf     = nil   -- sidebar buffer
 local swin     = nil   -- sidebar window
 local line_map = {}    -- line (1-based) → { kind, file_index, hunk_index? }
+local display_mode = "walk"  -- "walk" (intelligent order) or "files" (file order)
 
 -- ── helpers ────────────────────────────────────────────────────────────────
 
@@ -67,40 +68,78 @@ function M.refresh()
     return lnum
   end
 
-  push("  zpr  review", { kind = "header" }, "ZprSidebarTitle")
-  push("", nil, nil)
+  if display_mode == "walk" and #(r.walk_order or {}) > 0 then
+    -- Walk order view
+    local title = ("  zpr  walk (%d/%d)"):format(r.walk_index or 0, #r.walk_order)
+    push(title, { kind = "header" }, "ZprSidebarTitle")
+    push("", nil, nil)
 
-  if #files == 0 then
-    push("  (no review open)", nil, "ZprSidebarHunk")
-  else
-    for fi, f in ipairs(files) do
-      local is_cur_file = (r.file_index == fi)
-      local is_viewed   = require("zpr.viewed").is_viewed(f.file_path)
-      local icon        = is_viewed and "✓ " or (is_cur_file and "▶ " or "  ")
-      local label       = short_path(f.file_path)
-      local f_has_c     = file_has_comments(f.file_path)
-      local file_hl     = is_viewed and "ZprSidebarFileViewed"
-                          or (is_cur_file and "ZprSidebarFileCurrent" or "ZprSidebarFile")
-      local file_text   = ("  %s%s%s"):format(icon, label, f_has_c and " ✎" or "")
-      push(file_text,
-        { kind = "file", file_index = fi },
-        file_hl,
-        f_has_c)
+    local prev_file = nil
+    for si, step in ipairs(r.walk_order) do
+      local is_cur = (r.walk_index == si)
+      local bullet = is_cur and "● " or "○ "
 
-      if not is_viewed then
-        for hi, h in ipairs(f.hunks or {}) do
-          local is_cur    = is_cur_file and r.hunk_index == hi
-          local bullet    = is_cur and "● " or "○ "
-          local header    = hunk_header(h):sub(1, WIDTH - 8)
-          local h_has_c   = hunk_has_comments(f.file_path, hi)
-          local hunk_text = ("    %s%s%s"):format(bullet, header, h_has_c and " ✎" or "")
-          push(hunk_text,
-            { kind = "hunk", file_index = fi, hunk_index = hi },
-            is_cur and "ZprSidebarHunkCurrent" or "ZprSidebarHunk",
-            h_has_c)
+      -- Show file header when file changes
+      if step.file_path ~= prev_file then
+        local label = short_path(step.file_path)
+        local file_hl = (step.file_path == r.file_path) and "ZprSidebarFileCurrent" or "ZprSidebarFile"
+        push("  " .. label, { kind = "file", file_index = si }, file_hl)
+        prev_file = step.file_path
+      end
+
+      -- Find hunk header text
+      local hunk_text = ("hunk %d"):format(step.hunk_index)
+      for _, f in ipairs(files) do
+        if f.file_path == step.file_path and f.hunks and f.hunks[step.hunk_index] then
+          hunk_text = hunk_header(f.hunks[step.hunk_index]):sub(1, WIDTH - 10)
+          break
         end
       end
-      push("", nil, nil)
+
+      local h_has_c = hunk_has_comments(step.file_path, step.hunk_index)
+      local step_text = ("    %s%s%s"):format(bullet, hunk_text, h_has_c and " ✎" or "")
+      push(step_text,
+        { kind = "walk_step", walk_index = si, file_path = step.file_path, hunk_index = step.hunk_index },
+        is_cur and "ZprSidebarHunkCurrent" or "ZprSidebarHunk",
+        h_has_c)
+    end
+  else
+    -- File order view (default)
+    push("  zpr  review", { kind = "header" }, "ZprSidebarTitle")
+    push("", nil, nil)
+
+    if #files == 0 then
+      push("  (no review open)", nil, "ZprSidebarHunk")
+    else
+      for fi, f in ipairs(files) do
+        local is_cur_file = (r.file_index == fi)
+        local is_viewed   = require("zpr.viewed").is_viewed(f.file_path)
+        local icon        = is_viewed and "✓ " or (is_cur_file and "▶ " or "  ")
+        local label       = short_path(f.file_path)
+        local f_has_c     = file_has_comments(f.file_path)
+        local file_hl     = is_viewed and "ZprSidebarFileViewed"
+                            or (is_cur_file and "ZprSidebarFileCurrent" or "ZprSidebarFile")
+        local file_text   = ("  %s%s%s"):format(icon, label, f_has_c and " ✎" or "")
+        push(file_text,
+          { kind = "file", file_index = fi },
+          file_hl,
+          f_has_c)
+
+        if not is_viewed then
+          for hi, h in ipairs(f.hunks or {}) do
+            local is_cur    = is_cur_file and r.hunk_index == hi
+            local bullet    = is_cur and "● " or "○ "
+            local header    = hunk_header(h):sub(1, WIDTH - 8)
+            local h_has_c   = hunk_has_comments(f.file_path, hi)
+            local hunk_text = ("    %s%s%s"):format(bullet, header, h_has_c and " ✎" or "")
+            push(hunk_text,
+              { kind = "hunk", file_index = fi, hunk_index = hi },
+              is_cur and "ZprSidebarHunkCurrent" or "ZprSidebarHunk",
+              h_has_c)
+          end
+        end
+        push("", nil, nil)
+      end
     end
   end
 
@@ -229,8 +268,8 @@ function M.open()
   -- Remember which window was focused so we can return to it
   local prev_win = vim.api.nvim_get_current_win()
 
-  -- Open as a fixed-width left split
-  vim.cmd("topleft " .. WIDTH .. "vsplit")
+  -- Open as a fixed-width right split
+  vim.cmd("botright " .. WIDTH .. "vsplit")
   swin = vim.api.nvim_get_current_win()
   vim.api.nvim_win_set_buf(swin, sbuf)
 
@@ -271,6 +310,16 @@ end
 
 function M.toggle()
   if is_open() then M.close() else M.open() end
+end
+
+function M.toggle_walk()
+  display_mode = "walk"
+  if not is_open() then M.open() else M.refresh() end
+end
+
+function M.toggle_files()
+  display_mode = "files"
+  if not is_open() then M.open() else M.refresh() end
 end
 
 return M

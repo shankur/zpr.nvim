@@ -21,6 +21,9 @@ function M.setup()
   M.handlers["open_file"]      = function(p) return diff().open_file(p) end
   M.handlers["next_hunk"]      = function(p) return diff().next_hunk(p) end
   M.handlers["prev_hunk"]      = function(p) return diff().prev_hunk(p) end
+  M.handlers["next_hunk_local"] = function(p) return diff().next_hunk_local(p) end
+  M.handlers["prev_hunk_local"] = function(p) return diff().prev_hunk_local(p) end
+  M.handlers["set_walk_order"] = function(p) return diff().set_walk_order(p) end
   M.handlers["close"]          = function(_) vim.schedule(function() diff().close() end); return {} end
   M.handlers["ping"]           = function(_) return { pong = true } end
   M.handlers["next_file"]      = function(p) return diff().next_file(p) end
@@ -104,8 +107,10 @@ function M.setup()
   -- operators (gc comment toggle, gD etc.) without waiting for a motion.
   local function set_zpr_keymap(buf)
     local opts = { buffer = buf, silent = true, nowait = true }
-    vim.keymap.set("n", "]h", function() diff().next_hunk({}) end, vim.tbl_extend("force", opts, { desc = "zpr: next hunk" }))
-    vim.keymap.set("n", "[h", function() diff().prev_hunk({}) end, vim.tbl_extend("force", opts, { desc = "zpr: prev hunk" }))
+    vim.keymap.set("n", "]h", function() diff().next_hunk({}) end, vim.tbl_extend("force", opts, { desc = "zpr: next hunk (walk order)" }))
+    vim.keymap.set("n", "[h", function() diff().prev_hunk({}) end, vim.tbl_extend("force", opts, { desc = "zpr: prev hunk (walk order)" }))
+    vim.keymap.set("n", "]H", function() diff().next_hunk_local({}) end, vim.tbl_extend("force", opts, { desc = "zpr: next hunk in file" }))
+    vim.keymap.set("n", "[H", function() diff().prev_hunk_local({}) end, vim.tbl_extend("force", opts, { desc = "zpr: prev hunk in file" }))
     vim.keymap.set("n", "]f", function() diff().next_file({}) end, vim.tbl_extend("force", opts, { desc = "zpr: next file" }))
     vim.keymap.set("n", "[f", function() diff().prev_file({}) end, vim.tbl_extend("force", opts, { desc = "zpr: prev file" }))
     vim.keymap.set("n", "q",  function() diff().close()       end, vim.tbl_extend("force", opts, { desc = "zpr: close review" }))
@@ -219,10 +224,15 @@ function M.setup()
     callback = function() require("zpr.sidebar").refresh_cursor() end,
   })
 
-  -- <leader>zt: toggle sidebar (global keymap)
+  -- <leader>zt: toggle sidebar in walk order (intelligent)
   vim.keymap.set("n", "<leader>zt", function()
-    require("zpr.sidebar").toggle()
-  end, { silent = true, desc = "zpr: toggle sidebar" })
+    require("zpr.sidebar").toggle_walk()
+  end, { silent = true, desc = "zpr: sidebar (walk order)" })
+
+  -- <leader>zT: toggle sidebar in file order
+  vim.keymap.set("n", "<leader>zT", function()
+    require("zpr.sidebar").toggle_files()
+  end, { silent = true, desc = "zpr: sidebar (file order)" })
 
   vim.api.nvim_create_user_command("ZprSidebar", function()
     require("zpr.sidebar").toggle()

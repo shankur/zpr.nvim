@@ -16,9 +16,13 @@ A Neovim plugin for reviewing git commits and pull requests inline, with support
 
 ## Claude AI integration
 
-zpr.nvim ships a `/zpr-review` Claude Code skill that drives a full AI-assisted review:
-Claude reads the diff, prioritizes hunks by risk and complexity, opens them in
-order, and adds inline comments — all without leaving Neovim.
+zpr.nvim ships a `/zpr-review` Claude Code skill that drives a full AI-assisted review using **multiple parallel agents**:
+
+1. **7 reviewer agents** analyze the diff from different angles (functional correctness, code quality, tests, security, performance, API design, error handling)
+2. Each agent reads the full changed files and explores related code to catch duplication and dead code
+3. A **senior engineer filter agent** removes false positives and deduplicates findings
+4. An **ordering agent** arranges hunks into a logical walk order (dependency-aware grouping, tests last)
+5. Comments are placed inline in zpr with `[Category]` prefixes
 
 The skill is symlinked automatically by the lazy.nvim `build` hook. Then in any Claude Code session:
 ```
@@ -89,8 +93,10 @@ Keymaps are buffer-local and only active inside zpr diff buffers.
 
 | Key | Mode | Action |
 |---|---|---|
-| `]h` | n | Next hunk |
-| `[h` | n | Previous hunk |
+| `]h` | n | Next hunk (intelligent walk order, cross-file) |
+| `[h` | n | Previous hunk (intelligent walk order, cross-file) |
+| `]H` | n | Next hunk within current file |
+| `[H` | n | Previous hunk within current file |
 | `]f` | n | Next file in commit |
 | `[f` | n | Previous file in commit |
 | `q` | n | Close review |
@@ -98,7 +104,10 @@ Keymaps are buffer-local and only active inside zpr diff buffers.
 | `<leader>zc` | v | Add / edit comment on selected line range |
 | `<leader>zr` | n | Resolve / unresolve GitHub comment thread |
 | `<leader>zd` | n | Delete comment (with confirmation) |
-| `<leader>zt` | n | Toggle sidebar |
+| `<leader>zt` | n | Toggle sidebar (walk order) |
+| `<leader>zT` | n | Toggle sidebar (file order) |
+
+`]h`/`[h` follows the intelligent walk order set by `/zpr-review` (or falls back to within-file navigation if no walk order is set). You can freely mix `]h` and `]H` — the walk position stays in sync.
 
 ### Sidebar keymaps
 
@@ -172,8 +181,10 @@ Sends an RPC call to the running Neovim instance:
 ```sh
 zpr-call ping
 zpr-call status
-zpr-call next_hunk
+zpr-call next_hunk           # follow walk order
+zpr-call next_hunk_local     # within current file only
 zpr-call next_file
+zpr-call set_walk_order '{"steps": [{"file_path": "src/foo.py", "hunk_index": 1}, ...]}'
 zpr-call get_comments
 zpr-call close
 ```
@@ -208,7 +219,13 @@ zpr-call open_file '{
 
 ## Sidebar
 
-Toggle with `<leader>zt` or `:ZprSidebar`. The panel lists every file and its hunks for the active review.
+Toggle with `<leader>zt` (walk order) or `<leader>zT` (file order) or `:ZprSidebar`.
+
+The sidebar has two display modes:
+- **Walk order** (`<leader>zt`): Shows hunks in the intelligent review order set by `/zpr-review` — grouped by dependency, logical story, tests last. Displays current step position (e.g. "walk 3/12").
+- **File order** (`<leader>zT`): Traditional view listing every file and its hunks in file order with viewed-state tracking.
+
+Both modes open the sidebar on the right side. Pressing the other key switches the view without closing.
 
 **Indicators shown on each line:**
 
